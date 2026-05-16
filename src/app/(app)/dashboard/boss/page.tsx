@@ -91,14 +91,14 @@ export default function BossDashboard() {
     load()
   }, [isAdmin])
 
-  if (!isAdmin || loading) return <div className="p-6 text-gray-400">加载�?..</div>
+  if (!isAdmin || loading) return <div className="p-6 text-gray-400">加载中..</div>
 
   const totalCustomers = customers.length
   const overdueCount = customers.filter(c =>
     c.last_contact_date && daysSince(c.last_contact_date) >= OVERDUE_DAYS_THRESHOLD
   ).length
   const silentCount = customers.filter(c =>
-    c.last_contact_date && daysSince(c.last_contact_date) >= SILENT_DAYS_THRESHOLD && c.stage !== '已成�?
+    c.last_contact_date && daysSince(c.last_contact_date) >= SILENT_DAYS_THRESHOLD && c.stage !== '已成交'
   ).length
 
   // Monthly deal stats
@@ -228,16 +228,16 @@ export default function BossDashboard() {
 
       {/* Top cards row 1: deal metrics */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-        <StatCard icon={DollarSign} label="本月成交�? value={`$${formatAmount(monthDealAmount)}`} gold />
-        <StatCard icon={Package} label="本月成交�? value={monthDealCount} gold />
-        <StatCard icon={Repeat} label="复购�? value={`${reorderRate}%`} gold />
-        <StatCard icon={TrendingUp} label="今日总联�? value={Object.values(todayProgress).reduce((s, p) => s + p.logs, 0)} />
+        <StatCard icon={DollarSign} label="本月成交额" value={`$${formatAmount(monthDealAmount)}`} gold />
+        <StatCard icon={Package} label="本月成交笔数" value={monthDealCount} gold />
+        <StatCard icon={Repeat} label="复购率" value={`${reorderRate}%`} gold />
+        <StatCard icon={TrendingUp} label="今日总联系" value={Object.values(todayProgress).reduce((s, p) => s + p.logs, 0)} />
       </div>
 
       {/* Top cards row 2: customer health */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <StatCard icon={Users} label="客户总数" value={totalCustomers} />
-        <StatCard icon={AlertTriangle} label="超期未跟�? value={overdueCount} danger={overdueCount > 0} />
+        <StatCard icon={AlertTriangle} label="超期未跟进" value={overdueCount} danger={overdueCount > 0} />
         <StatCard icon={Moon} label="沉默客户" value={silentCount} danger={silentCount > 0} />
         <StatCard icon={Bell} label="逾期提醒" value={totalOverdueReminders} danger={totalOverdueReminders > 0} subtext={`待办 ${pendingReminders.length}`} />
       </div>
@@ -389,13 +389,13 @@ export default function BossDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         {/* Monthly deal trend */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">�?个月成交趋势</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">近6个月成交趋势</h3>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={monthlyDealData}>
               <XAxis dataKey="month" tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip
-                formatter={(value) => [`$${formatAmount(Number(value))}`, '成交�?]}
+                formatter={(value) => [`$${formatAmount(Number(value))}`, '成交额']}
               />
               <Bar dataKey="amount" fill="#b45309" radius={[4, 4, 0, 0]} />
             </BarChart>
@@ -404,7 +404,7 @@ export default function BossDashboard() {
 
         {/* Stage distribution */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">各阶段客户分�?/h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">各阶段客户分布</h3>
           <ResponsiveContainer width="100%" height={200}>
             <PieChart>
               <Pie data={stageCounts} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name, value }) => value > 0 ? `${name}(${value})` : ''}>
@@ -420,7 +420,7 @@ export default function BossDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         {/* Owner distribution */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">各业务员客户�?/h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">各业务员客户数</h3>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={ownerCounts} layout="vertical" margin={{ left: 20 }}>
               <XAxis type="number" />
@@ -433,7 +433,7 @@ export default function BossDashboard() {
 
         {/* Member deal ranking this month */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">本月业务员成交排�?/h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">本月业务员成交排行</h3>
           {memberDealRanking.length === 0 ? (
             <p className="text-sm text-gray-400 mt-8 text-center">本月暂无成交</p>
           ) : (
@@ -463,7 +463,7 @@ export default function BossDashboard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-gray-500 text-left text-xs border-b border-gray-100">
-                  <th className="py-2 px-2">业务�?/th>
+                  <th className="py-2 px-2">业务员</th>
                   <th className="py-2 px-2 text-right">待办</th>
                   <th className="py-2 px-2 text-right">逾期</th>
                 </tr>
@@ -524,7 +524,7 @@ export default function BossDashboard() {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-gray-500 text-left border-b border-gray-100">
-              <th className="py-2 px-3 font-medium">业务�?/th>
+              <th className="py-2 px-3 font-medium">业务员</th>
               <th className="py-2 px-3 font-medium text-center">新增客户</th>
               <th className="py-2 px-3 font-medium text-center">推进阶段</th>
               <th className="py-2 px-3 font-medium text-center">联系记录</th>
