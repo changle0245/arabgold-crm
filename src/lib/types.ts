@@ -179,7 +179,7 @@ export interface Sample {
 export type TimelineEvent = {
   id: string
   date: string
-  type: 'contact' | 'quotation' | 'deal' | 'sample' | 'stage_change' | 'reminder' | 'whatsapp' | 'email'
+  type: 'contact' | 'quotation' | 'deal' | 'sample' | 'stage_change' | 'reminder'
   title: string
   detail: string | null
   user: string | null
@@ -200,19 +200,4 @@ export interface Reminder {
   created_at: string
   customer?: Pick<Customer, 'id' | 'contact_name' | 'company_name'>
   assignee?: Profile
-}
-
-// ── Phase 4 ──
-
-export interface CommunicationLog {
-  id: string
-  customer_id: string
-  channel: 'whatsapp' | 'email'
-  direction: 'outgoing' | 'incoming'
-  sender_name: string | null
-  content: string | null
-  sent_at: string
-  original_file_url: string | null
-  created_by: string
-  created_at: string
 }
