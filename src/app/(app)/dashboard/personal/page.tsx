@@ -66,7 +66,7 @@ export default function PersonalDashboard() {
         .eq('log_date', today),
       supabase
         .from('reminders')
-        .select('*, customer:customers(id, contact_name, company_name)')
+        .select('*, customer:customers!reminders_customer_id_fkey(id, contact_name, company_name)')
         .eq('assigned_to', profile.id)
         .eq('status', 'pending')
         .order('due_date', { ascending: true }),

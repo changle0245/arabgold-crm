@@ -28,7 +28,7 @@ export default function RemindersPage() {
     const supabase = createClient()
     let query = supabase
       .from('reminders')
-      .select('*, customer:customers(id, contact_name, company_name), assignee:profiles!reminders_assigned_to_fkey(*)')
+      .select('*, customer:customers!reminders_customer_id_fkey(id, contact_name, company_name), assignee:profiles!reminders_assigned_to_fkey(*)')
       .order('due_date', { ascending: true })
 
     if (scopeFilter === 'mine') {

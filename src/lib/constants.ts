@@ -84,6 +84,7 @@ export const CARRIERS = ['DHL', 'FedEx', 'UPS', 'TNT', 'EMS', '顺丰', '圆通'
 export const REMINDER_TYPES = [
   'follow_up', 'payment', 'quotation', 'sample_feedback',
   'birthday', 'festival', 'shipping', 'custom',
+  'silent_customer', 'reorder_cycle',
 ] as const
 export const REMINDER_TYPE_LABELS: Record<string, string> = {
   follow_up: '回访',
@@ -94,6 +95,8 @@ export const REMINDER_TYPE_LABELS: Record<string, string> = {
   festival: '节日问候',
   shipping: '发货跟进',
   custom: '自定义',
+  silent_customer: '沉默客户',
+  reorder_cycle: '返单周期',
 }
 export const REMINDER_STATUSES = ['pending', 'completed', 'cancelled'] as const
 export const REMINDER_STATUS_LABELS: Record<string, string> = {

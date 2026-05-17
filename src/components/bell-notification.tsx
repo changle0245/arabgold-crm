@@ -1,33 +1,24 @@
 'use client'
 
-import { Bell, AlertCircle, Clock, TrendingUp } from 'lucide-react'
+import { Bell, AlertCircle, Clock, TrendingUp, DollarSign, FileText, Package, Cake, Gift, Truck, Edit } from 'lucide-react'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from './auth-provider'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-
-type Reminder = {
-  id: string
-  customer_id: string
-  type: 'manual' | 'silent_customer' | 'reorder_cycle'
-  note: string
-  due_date: string
-  customers: {
-    id: string
-    contact_name: string
-  }
-}
+import type { Reminder } from '@/lib/types'
+import { REMINDER_TYPE_LABELS } from '@/lib/constants'
 
 const typeIcons = {
-  manual: Clock,
+  follow_up: Clock,
+  payment: DollarSign,
+  quotation: FileText,
+  sample_feedback: Package,
+  birthday: Cake,
+  festival: Gift,
+  shipping: Truck,
+  custom: Edit,
   silent_customer: AlertCircle,
   reorder_cycle: TrendingUp,
-}
-
-const typeLabels = {
-  manual: '手动提醒',
-  silent_customer: '沉默客户',
-  reorder_cycle: '返单周期',
 }
 
 export function BellNotification() {
@@ -58,10 +49,15 @@ export function BellNotification() {
       .select(`
         id,
         customer_id,
+        assigned_to,
         type,
         note,
         due_date,
-        customers (
+        status,
+        created_by,
+        completed_at,
+        created_at,
+        customer:customers!reminders_customer_id_fkey(
           id,
           contact_name
         )
@@ -72,7 +68,11 @@ export function BellNotification() {
       .order('created_at', { ascending: false })
       .limit(5)
 
-    setLatestReminders(data || [])
+    const normalized: Reminder[] = (data || []).map((r: any) => ({
+      ...r,
+      customer: Array.isArray(r.customer) ? (r.customer[0] ?? null) : (r.customer ?? null),
+    }))
+    setLatestReminders(normalized)
   }, [profile?.id])
 
   useEffect(() => {
@@ -96,6 +96,7 @@ export function BellNotification() {
   }, [isOpen])
 
   const handleReminderClick = (reminder: Reminder) => {
+    if (!reminder.customer_id) return
     setIsOpen(false)
     router.push(`/customers/${reminder.customer_id}`)
   }
@@ -159,8 +160,8 @@ export function BellNotification() {
             ) : (
               <div className="divide-y divide-gray-100">
                 {latestReminders.map(reminder => {
-                  const TypeIcon = typeIcons[reminder.type]
-                  const customerName = reminder.customers?.contact_name || '未知客户'
+                  const TypeIcon = typeIcons[reminder.type as keyof typeof typeIcons] || Bell
+                  const customerName = reminder.customer?.contact_name || '未知客户'
 
                   return (
                     <div
@@ -175,17 +176,17 @@ export function BellNotification() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
                             <span className="text-xs text-gray-500">
-                              {typeLabels[reminder.type]}
+                              {REMINDER_TYPE_LABELS[reminder.type]}
                             </span>
                             <span className="text-xs font-medium text-gray-900">
                               {customerName}
                             </span>
                           </div>
                           <p className="text-sm text-gray-600 mb-1">
-                            {truncateText(reminder.note, 30)}
+                            {truncateText(reminder.note || '', 30)}
                           </p>
                           <div className="text-xs text-gray-400">
-                            到期: {formatDueDate(reminder.due_date)}
+                            到期: {reminder.due_date ? formatDueDate(reminder.due_date) : '无到期日期'}
                           </div>
                         </div>
                       </div>

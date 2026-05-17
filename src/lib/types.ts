@@ -191,7 +191,7 @@ export interface Reminder {
   id: string
   customer_id: string | null
   assigned_to: string | null
-  type: string
+  type: 'follow_up' | 'payment' | 'quotation' | 'sample_feedback' | 'birthday' | 'festival' | 'shipping' | 'custom' | 'silent_customer' | 'reorder_cycle'
   due_date: string | null
   status: string
   note: string | null
