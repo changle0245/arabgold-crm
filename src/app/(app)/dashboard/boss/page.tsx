@@ -197,24 +197,17 @@ export default function BossDashboard() {
     yoyPercent = (yoyChange / lastYearMonthAmount) * 100
   }
 
-  // === P1-1.2: Conversion Funnel ===
+  // === P1-1.2: Conversion Funnel（累计漏斗占比） ===
+  // 每档显示 sum(counts[i..end]) / sum(counts) * 100
+  // 永远 ≤100%、单调不增,不依赖"客户严格按阶段顺序流转"的假设。
   const funnelStages = ['新接触', '报价中', '已寄样', '已成交']
+  const funnelCounts = funnelStages.map(stage => customers.filter(c => c.stage === stage).length)
+  const funnelTotal = funnelCounts.reduce((a, b) => a + b, 0)
   const funnelData = funnelStages.map((stage, index) => {
-    const count = customers.filter(c => c.stage === stage).length
-    let conversionRate: number | null = null
-
-    if (index > 0) {
-      const prevStageCount = customers.filter(c => c.stage === funnelStages[index - 1]).length
-      if (prevStageCount > 0) {
-        conversionRate = (count / prevStageCount) * 100
-      }
-    }
-
-    return {
-      stage,
-      count,
-      conversionRate
-    }
+    const count = funnelCounts[index]
+    const cumulativeCount = funnelCounts.slice(index).reduce((a, b) => a + b, 0)
+    const cumulativePercent = funnelTotal > 0 ? (cumulativeCount / funnelTotal) * 100 : 0
+    return { stage, count, cumulativePercent }
   })
 
   // === P1-1.3: Monthly Target Progress ===
@@ -350,36 +343,33 @@ export default function BossDashboard() {
 
       {/* P1-1.2: Conversion Funnel */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
-        <h3 className="text-sm font-semibold text-gray-700 mb-4">成交转化率漏斗</h3>
-        <div className="space-y-3">
-          {funnelData.map((item, index) => (
-            <div key={item.stage}>
-              <div className="flex items-center justify-between mb-1">
-                <div className="flex items-center gap-2">
+        <h3 className="text-sm font-semibold text-gray-700 mb-4">成交漏斗</h3>
+        {funnelTotal === 0 ? (
+          <p className="text-sm text-gray-400 py-6 text-center">暂无客户进入漏斗</p>
+        ) : (
+          <div className="space-y-3">
+            {funnelData.map((item) => (
+              <div key={item.stage}>
+                <div className="flex items-center justify-between mb-1">
                   <span className="text-sm font-medium text-gray-700">{item.stage}</span>
-                  {item.conversionRate !== null && (
-                    <span className="text-xs text-green-600">
-                      转化率 {item.conversionRate.toFixed(1)}%
+                  <span className="text-sm font-bold text-gray-900">{item.count} 人</span>
+                </div>
+                <div className="relative h-8 bg-gray-100 rounded overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-gold-400 to-gold-600 flex items-center justify-start px-3"
+                    style={{
+                      width: `${Math.max(item.cumulativePercent, 5)}%`
+                    }}
+                  >
+                    <span className="text-xs font-medium text-white">
+                      {item.count > 0 && `${item.cumulativePercent.toFixed(0)}%`}
                     </span>
-                  )}
-                </div>
-                <span className="text-sm font-bold text-gray-900">{item.count} 人</span>
-              </div>
-              <div className="relative h-8 bg-gray-100 rounded overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-gold-400 to-gold-600 flex items-center justify-start px-3"
-                  style={{
-                    width: `${index === 0 ? 100 : Math.max((item.count / funnelData[0].count) * 100, 5)}%`
-                  }}
-                >
-                  <span className="text-xs font-medium text-white">
-                    {item.count > 0 && `${((item.count / funnelData[0].count) * 100).toFixed(0)}%`}
-                  </span>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
         <p className="text-xs text-gray-400 mt-3">
           注：不包含"沉默"和"待定"阶段客户
         </p>
