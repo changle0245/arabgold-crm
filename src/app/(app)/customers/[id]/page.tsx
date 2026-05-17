@@ -13,8 +13,22 @@ import { SamplePanel } from '@/components/sample-panel'
 import { ReminderPanel } from '@/components/reminder-panel'
 import type { Customer, ContactLog, CustomerAttachment, Profile, Quotation, Deal, Sample, Reminder, TimelineEvent } from '@/lib/types'
 import { CONTACT_TAGS, QUOTATION_STATUS_LABELS, DEAL_STATUS_LABELS, SAMPLE_STATUS_LABELS, REMINDER_TYPE_LABELS } from '@/lib/constants'
-import { Pencil, Trash2, Upload, Plus, ArrowLeft, FileText, Image as ImageIcon } from 'lucide-react'
+import { Pencil, Trash2, Upload, Plus, ArrowLeft, FileText, Image as ImageIcon, Phone, Package, Truck, TrendingUp, Check } from 'lucide-react'
 import { todayLocalISO } from '@/lib/dates'
+
+const typeMeta: Record<TimelineEvent['type'], {
+  icon: typeof Phone
+  label: string
+  chipClass: string
+  iconClass: string
+}> = {
+  contact:      { icon: Phone,       label: '联系', chipClass: 'bg-gold-50 text-gold-700',     iconClass: 'text-gold-500' },
+  quotation:    { icon: FileText,    label: '报价', chipClass: 'bg-blue-50 text-blue-700',     iconClass: 'text-blue-500' },
+  deal:         { icon: Package,     label: '成交', chipClass: 'bg-green-50 text-green-700',   iconClass: 'text-green-500' },
+  sample:       { icon: Truck,       label: '样品', chipClass: 'bg-purple-50 text-purple-700', iconClass: 'text-purple-500' },
+  stage_change: { icon: TrendingUp,  label: '阶段', chipClass: 'bg-amber-50 text-amber-700',   iconClass: 'text-amber-500' },
+  reminder:     { icon: Check,       label: '提醒', chipClass: 'bg-gray-100 text-gray-600',    iconClass: 'text-gray-400' },
+}
 
 type Tab = 'overview' | 'quotations' | 'deals' | 'samples'
 
@@ -449,7 +463,7 @@ export default function CustomerDetailPage() {
           {/* Contact Log */}
           <div className="bg-white rounded-xl border border-gray-200 p-4 lg:p-5">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-gray-700">联系记录</h2>
+              <h2 className="text-sm font-semibold text-gray-700">客户事件</h2>
               {canEdit && (
                 <button
                   onClick={() => setShowLogForm(!showLogForm)}
@@ -505,23 +519,28 @@ export default function CustomerDetailPage() {
               </form>
             )}
 
-            {logs.length === 0 ? (
-              <p className="text-sm text-gray-400">暂无联系记录</p>
+            {timelineEvents.length === 0 ? (
+              <p className="text-sm text-gray-400">暂无事件</p>
             ) : (
               <div className="space-y-0">
-                {logs.map(log => (
-                  <div key={log.id} className="flex gap-3 py-3 border-t border-gray-100 first:border-t-0">
-                    <div className="w-2 h-2 rounded-full bg-gold-400 mt-1.5 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-baseline gap-2 flex-wrap">
-                        <span className="text-sm text-gray-900 font-medium">{log.log_date}</span>
-                        <span className="inline-block px-2 py-0.5 rounded bg-gray-100 text-xs text-gray-600">{log.tag}</span>
-                        <span className="text-xs text-gray-400">{log.logger?.full_name}</span>
+                {timelineEvents.map(ev => {
+                  const meta = typeMeta[ev.type]
+                  const Icon = meta.icon
+                  return (
+                    <div key={ev.id} className="flex gap-3 py-3 border-t border-gray-100 first:border-t-0">
+                      <Icon size={14} className={`${meta.iconClass} mt-1 shrink-0`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline gap-2 flex-wrap">
+                          <span className="text-sm text-gray-900 font-medium">{ev.date}</span>
+                          <span className={`inline-block px-2 py-0.5 rounded text-xs ${meta.chipClass}`}>{meta.label}</span>
+                          <span className="text-sm text-gray-700">{ev.title}</span>
+                          {ev.user && <span className="text-xs text-gray-400 ml-auto">{ev.user}</span>}
+                        </div>
+                        {ev.detail && <p className="text-sm text-gray-600 mt-0.5">{ev.detail}</p>}
                       </div>
-                      {log.note && <p className="text-sm text-gray-600 mt-0.5">{log.note}</p>}
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
