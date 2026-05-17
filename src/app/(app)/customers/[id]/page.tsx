@@ -14,6 +14,7 @@ import { ReminderPanel } from '@/components/reminder-panel'
 import type { Customer, ContactLog, CustomerAttachment, Profile, Quotation, Deal, Sample, Reminder, TimelineEvent } from '@/lib/types'
 import { CONTACT_TAGS, QUOTATION_STATUS_LABELS, DEAL_STATUS_LABELS, SAMPLE_STATUS_LABELS, REMINDER_TYPE_LABELS } from '@/lib/constants'
 import { Pencil, Trash2, Upload, Plus, ArrowLeft, FileText, Image as ImageIcon } from 'lucide-react'
+import { todayLocalISO } from '@/lib/dates'
 
 type Tab = 'overview' | 'quotations' | 'deals' | 'samples'
 
@@ -36,7 +37,7 @@ export default function CustomerDetailPage() {
   const [showLogForm, setShowLogForm] = useState(false)
   const [logTag, setLogTag] = useState<string>(CONTACT_TAGS[0])
   const [logNote, setLogNote] = useState('')
-  const [logDate, setLogDate] = useState(new Date().toISOString().split('T')[0])
+  const [logDate, setLogDate] = useState(todayLocalISO())
   const [savingLog, setSavingLog] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [dealPrefill, setDealPrefill] = useState<Quotation | null>(null)
@@ -135,7 +136,7 @@ export default function CustomerDetailPage() {
     })
     setShowLogForm(false)
     setLogNote('')
-    setLogDate(new Date().toISOString().split('T')[0])
+    setLogDate(todayLocalISO())
     setSavingLog(false)
     loadData()
   }

@@ -7,16 +7,7 @@ import { useAuth } from '@/components/auth-provider'
 import type { Customer, Profile, Reminder } from '@/lib/types'
 import { OVERDUE_DAYS_THRESHOLD, SILENT_DAYS_THRESHOLD, REMINDER_TYPE_LABELS } from '@/lib/constants'
 import { Users, AlertTriangle, MessageSquare, UserPlus, Bell, Check, Calendar, TrendingUp, PieChart } from 'lucide-react'
-
-function daysSince(dateStr: string | null): number {
-  if (!dateStr) return 9999
-  return Math.floor((Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24))
-}
-
-function daysFromNow(dateStr: string | null): number {
-  if (!dateStr) return 0
-  return Math.floor((new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-}
+import { daysSince, daysFromNow, todayLocalISO } from '@/lib/dates'
 
 export default function PersonalDashboard() {
   const { profile } = useAuth()
@@ -34,7 +25,7 @@ export default function PersonalDashboard() {
   const load = async () => {
     if (!profile?.id) return
     const supabase = createClient()
-    const today = new Date().toISOString().split('T')[0]
+    const today = todayLocalISO()
 
     // Calculate date ranges for P1-2
     const now = new Date()

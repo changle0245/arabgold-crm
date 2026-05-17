@@ -8,6 +8,7 @@ import {
   DEAL_STATUS_LABELS, DEAL_STATUSES, CURRENCIES, PAYMENT_PREFERENCES, PRODUCT_CATEGORIES,
 } from '@/lib/constants'
 import { Plus, Package, Check, Pencil, Trash2, ChevronDown, ChevronRight } from 'lucide-react'
+import { todayLocalISO } from '@/lib/dates'
 
 interface Props {
   customerId: string
@@ -30,7 +31,7 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
   const [editingId, setEditingId] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
-  const [dealDate, setDealDate] = useState(new Date().toISOString().split('T')[0])
+  const [dealDate, setDealDate] = useState(todayLocalISO())
   const [dealAmount, setDealAmount] = useState('')
   const [currency, setCurrency] = useState('USD')
   const [paymentMethod, setPaymentMethod] = useState('')
@@ -40,7 +41,7 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
   const [items, setItems] = useState<Partial<DealItem>[]>([])
 
   function resetForm() {
-    setDealDate(new Date().toISOString().split('T')[0])
+    setDealDate(todayLocalISO())
     setDealAmount('')
     setCurrency('USD')
     setPaymentMethod('')
@@ -85,7 +86,7 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
       if (cancelled) return
 
       setEditingId(null)
-      setDealDate(new Date().toISOString().split('T')[0])
+      setDealDate(todayLocalISO())
       setDealAmount(prefillQuotation.total_amount != null ? String(prefillQuotation.total_amount) : '')
       setCurrency(prefillQuotation.currency || 'USD')
       setPaymentMethod('')
@@ -113,7 +114,7 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
   async function startEdit(d: Deal) {
     resetForm()
     setEditingId(d.id)
-    setDealDate(d.deal_date || new Date().toISOString().split('T')[0])
+    setDealDate(d.deal_date || todayLocalISO())
     setDealAmount(d.deal_amount != null ? String(d.deal_amount) : '')
     setCurrency(d.currency || 'USD')
     setPaymentMethod(d.payment_method || '')

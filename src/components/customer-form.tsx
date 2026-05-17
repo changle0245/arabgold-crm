@@ -10,6 +10,7 @@ import { CustomerAvatar } from './customer-avatar'
 import { TagsEditor } from './tags-editor'
 import type { Customer, Profile } from '@/lib/types'
 import { Camera, Upload, Trash2 } from 'lucide-react'
+import { todayLocalISO } from '@/lib/dates'
 import {
   COUNTRIES, LEVELS, STAGES, SOURCES, PRODUCT_CATEGORIES, PAYMENT_PREFERENCES,
   GENDERS, CURRENCIES, INCOTERMS, PURCHASE_FREQUENCIES, DECISION_ROLES,
@@ -207,7 +208,7 @@ export function CustomerForm({ customer }: Props) {
       const insertData = {
         ...payload,
         created_by: profile!.id,
-        last_contact_date: new Date().toISOString().split('T')[0],
+        last_contact_date: todayLocalISO(),
       }
       const { data, error } = await supabase.from('customers').insert(insertData).select('id').single()
       if (error) { alert('保存失败: ' + error.message); setSaving(false); return }

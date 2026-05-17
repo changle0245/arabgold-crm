@@ -8,6 +8,7 @@ import {
   SAMPLE_STATUS_LABELS, SAMPLE_STATUSES, CARRIERS, PRODUCT_CATEGORIES,
 } from '@/lib/constants'
 import { Plus, PackageCheck, Pencil, Trash2 } from 'lucide-react'
+import { todayLocalISO } from '@/lib/dates'
 
 interface Props {
   customerId: string
@@ -23,7 +24,7 @@ export function SamplePanel({ customerId, samples, canEdit, onRefresh }: Props) 
   const [editingId, setEditingId] = useState<string | null>(null)
 
   const [sampleDesc, setSampleDesc] = useState('')
-  const [sentDate, setSentDate] = useState(new Date().toISOString().split('T')[0])
+  const [sentDate, setSentDate] = useState(todayLocalISO())
   const [trackingNo, setTrackingNo] = useState('')
   const [carrier, setCarrier] = useState('')
   const [quantity, setQuantity] = useState('1')
@@ -35,7 +36,7 @@ export function SamplePanel({ customerId, samples, canEdit, onRefresh }: Props) 
 
   function resetForm() {
     setSampleDesc('')
-    setSentDate(new Date().toISOString().split('T')[0])
+    setSentDate(todayLocalISO())
     setTrackingNo('')
     setCarrier('')
     setQuantity('1')
@@ -47,7 +48,7 @@ export function SamplePanel({ customerId, samples, canEdit, onRefresh }: Props) 
     resetForm()
     setEditingId(s.id)
     setSampleDesc(s.sample_desc || '')
-    setSentDate(s.sent_date || new Date().toISOString().split('T')[0])
+    setSentDate(s.sent_date || todayLocalISO())
     setTrackingNo(s.tracking_no || '')
     setCarrier(s.carrier || '')
     setQuantity(String(s.quantity ?? 1))
@@ -113,7 +114,7 @@ export function SamplePanel({ customerId, samples, canEdit, onRefresh }: Props) 
     const supabase = createClient()
     await supabase.from('samples').update({
       feedback: feedbackText.trim(),
-      feedback_date: new Date().toISOString().split('T')[0],
+      feedback_date: todayLocalISO(),
       status: 'feedback_received',
     }).eq('id', sampleId)
     setFeedbackId(null)

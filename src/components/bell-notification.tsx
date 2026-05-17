@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import type { Reminder } from '@/lib/types'
 import { REMINDER_TYPE_LABELS } from '@/lib/constants'
+import { daysFromNow } from '@/lib/dates'
 
 const typeIcons = {
   follow_up: Clock,
@@ -112,15 +113,7 @@ export function BellNotification() {
   }
 
   const formatDueDate = (dateStr: string) => {
-    const date = new Date(dateStr)
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const dueDate = new Date(date)
-    dueDate.setHours(0, 0, 0, 0)
-
-    const diffTime = dueDate.getTime() - today.getTime()
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-
+    const diffDays = daysFromNow(dateStr)
     if (diffDays < 0) return `逾期 ${Math.abs(diffDays)} 天`
     if (diffDays === 0) return '今天'
     if (diffDays === 1) return '明天'

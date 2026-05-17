@@ -7,13 +7,9 @@ import { useAuth } from '@/components/auth-provider'
 import type { Reminder } from '@/lib/types'
 import { REMINDER_TYPES, REMINDER_TYPE_LABELS } from '@/lib/constants'
 import { Bell, Check, X, Clock, Filter } from 'lucide-react'
+import { daysFromNow, addDays } from '@/lib/dates'
 
 type StatusFilter = 'pending' | 'completed' | 'all'
-
-function daysFromNow(dateStr: string | null): number {
-  if (!dateStr) return 0
-  return Math.floor((new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-}
 
 export default function RemindersPage() {
   const { profile, isAdmin } = useAuth()
@@ -58,9 +54,7 @@ export default function RemindersPage() {
     const supabase = createClient()
     const r = reminders.find(x => x.id === id)
     if (!r?.due_date) return
-    const next = new Date(r.due_date)
-    next.setDate(next.getDate() + days)
-    await supabase.from('reminders').update({ due_date: next.toISOString().split('T')[0] }).eq('id', id)
+    await supabase.from('reminders').update({ due_date: addDays(r.due_date, days) }).eq('id', id)
     load()
   }
 

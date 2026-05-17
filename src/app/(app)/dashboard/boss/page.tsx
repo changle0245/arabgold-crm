@@ -8,6 +8,7 @@ import type { Customer, Profile, Deal, Reminder } from '@/lib/types'
 import { OVERDUE_DAYS_THRESHOLD, SILENT_DAYS_THRESHOLD, STAGES, DEAL_STATUS_LABELS } from '@/lib/constants'
 import { Users, AlertTriangle, Moon, TrendingUp, DollarSign, Package, Repeat, Bell, ShieldAlert, ArrowUp, ArrowDown, Target } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
+import { daysSince, todayLocalISO } from '@/lib/dates'
 
 type ConcentrationRiskCustomer = {
   customer_id: string
@@ -16,11 +17,6 @@ type ConcentrationRiskCustomer = {
   total_amount: number
   revenue_share: number
   deal_count: number
-}
-
-function daysSince(dateStr: string | null): number {
-  if (!dateStr) return 9999
-  return Math.floor((Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24))
 }
 
 const COLORS = ['#d1d5db', '#34d399', '#60a5fa', '#a78bfa', '#f59e0b', '#ef4444']
@@ -44,7 +40,7 @@ export default function BossDashboard() {
   useEffect(() => {
     if (!isAdmin) return
     const supabase = createClient()
-    const today = new Date().toISOString().split('T')[0]
+    const today = todayLocalISO()
 
     async function load() {
       const [{ data: custs }, { data: mems }, { data: todayCustomers }, { data: todayStageChanges }, { data: todayLogs }, { data: allDeals }, { data: allReminders }, { data: riskCustomers }, { data: settings }] = await Promise.all([
@@ -155,7 +151,7 @@ export default function BossDashboard() {
     .sort((a, b) => b.amount - a.amount)
 
   // Reminder distribution by member
-  const todayStr = new Date().toISOString().split('T')[0]
+  const todayStr = todayLocalISO()
   const reminderByMember = members.map(m => {
     const mine = pendingReminders.filter(r => r.assigned_to === m.id)
     const overdueRem = mine.filter(r => r.due_date && r.due_date < todayStr).length

@@ -10,13 +10,7 @@ import type { Customer, Profile } from '@/lib/types'
 import { LEVELS, STAGES, SOURCES } from '@/lib/constants'
 import { OVERDUE_DAYS_THRESHOLD } from '@/lib/constants'
 import { Plus, Search } from 'lucide-react'
-
-function daysSince(dateStr: string | null): number {
-  if (!dateStr) return 9999
-  const d = new Date(dateStr)
-  const now = new Date()
-  return Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24))
-}
+import { daysSince } from '@/lib/dates'
 
 export default function CustomersPage() {
   const { profile, isAdmin } = useAuth()
