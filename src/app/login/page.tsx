@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
@@ -10,6 +10,16 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
+
+  // Read ?reason=inactive (set by auth-provider when a deactivated session
+  // is detected) without pulling in useSearchParams + a Suspense boundary.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('reason') === 'inactive') {
+      setError('账号已停用,请联系管理员')
+    }
+  }, [])
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -27,11 +37,18 @@ export default function LoginPage() {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role, is_active')
       .eq('id', signInData.user.id)
       .single()
 
-    if (profile?.role === 'admin') {
+    if (!profile || profile.is_active === false) {
+      await supabase.auth.signOut()
+      setError('账号已停用,请联系管理员')
+      setLoading(false)
+      return
+    }
+
+    if (profile.role === 'admin') {
       router.push('/dashboard/boss')
     } else {
       router.push('/dashboard/personal')

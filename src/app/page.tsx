@@ -9,11 +9,16 @@ export default async function Home() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role')
+    .select('role, is_active')
     .eq('id', session.user.id)
     .single()
 
-  if (profile?.role === 'admin') {
+  if (!profile || profile.is_active === false) {
+    await supabase.auth.signOut()
+    redirect('/login?reason=inactive')
+  }
+
+  if (profile.role === 'admin') {
     redirect('/dashboard/boss')
   } else {
     redirect('/dashboard/personal')

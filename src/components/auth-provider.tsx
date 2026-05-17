@@ -23,6 +23,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const supabase = createClient()
 
+    // Returns true if the user was forced out (caller should NOT setProfile).
+    async function enforceActiveOrSignOut(p: Profile | null): Promise<boolean> {
+      if (p && p.is_active === false) {
+        await supabase.auth.signOut()
+        setProfile(null)
+        if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+          window.location.replace('/login?reason=inactive')
+        }
+        return true
+      }
+      return false
+    }
+
     async function loadProfile() {
       const { data: { session } } = await supabase.auth.getSession()
       if (session?.user) {
@@ -31,7 +44,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .select('*')
           .eq('id', session.user.id)
           .single()
-        setProfile(data)
+        const stopped = await enforceActiveOrSignOut(data)
+        if (!stopped) setProfile(data)
       }
       setLoading(false)
     }
@@ -49,7 +63,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             .select('*')
             .eq('id', userId)
             .single()
-          setProfile(data)
+          const stopped = await enforceActiveOrSignOut(data)
+          if (!stopped) setProfile(data)
         }, 0)
       }
     })
