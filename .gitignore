@@ -44,3 +44,8 @@ next-env.d.ts
 /supabase/.temp
 supabase-start.log
 /bin/supabase.tar.gz
+
+# local dev artifacts
+dev.log
+dev.err.log
+nul
