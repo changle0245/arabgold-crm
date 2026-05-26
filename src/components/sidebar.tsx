@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from './auth-provider'
 import { createClient } from '@/lib/supabase/client'
 import {
-  Users, LayoutDashboard, BarChart3, UserCog, LogOut, Menu, X, Bell, FileText, Package,
+  Users, LayoutDashboard, BarChart3, UserCog, LogOut, Menu, X, Bell, FileText, Package, Inbox,
 } from 'lucide-react'
 import { useState, useEffect, useCallback } from 'react'
 import { BellNotification } from './bell-notification'
@@ -16,6 +16,7 @@ const navItems = [
   { href: '/quotations', label: '报价记录', icon: FileText, roles: ['admin', 'member'] },
   { href: '/deals', label: '成交记录', icon: Package, roles: ['admin', 'member'] },
   { href: '/reminders', label: '我的提醒', icon: Bell, roles: ['admin', 'member'] },
+  { href: '/inbound-queue', label: '待归档邮件', icon: Inbox, roles: ['admin', 'member'] },
   { href: '/dashboard/personal', label: '个人大屏', icon: LayoutDashboard, roles: ['admin', 'member'] },
   { href: '/dashboard/boss', label: '老板大屏', icon: BarChart3, roles: ['admin'] },
   { href: '/members', label: '成员管理', icon: UserCog, roles: ['admin'] },
@@ -43,8 +44,20 @@ export function Sidebar() {
 
   useEffect(() => {
     loadOverdue()
-    const interval = setInterval(loadOverdue, 60000)
-    return () => clearInterval(interval)
+    // 修 #12: sidebar 红圈数字以前每 60s 才刷新一次，导致完成提醒后徽章很久不更新。
+    // 现在：① 任何 reminder 操作（完成/取消/创建/推迟）会 dispatch 'reminders-changed'
+    // ② 缩短轮询到 15s 作为兜底
+    // ③ 切到本页时（visibilitychange → visible）立即刷新
+    const interval = setInterval(loadOverdue, 15000)
+    const onChange = () => loadOverdue()
+    const onVisible = () => { if (!document.hidden) loadOverdue() }
+    window.addEventListener('reminders-changed', onChange)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('reminders-changed', onChange)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [loadOverdue, pathname])
 
   async function handleLogout() {
@@ -53,9 +66,12 @@ export function Sidebar() {
     router.push('/login')
   }
 
-  const visibleItems = navItems.filter(item =>
-    item.roles.includes(profile?.role || 'member')
-  )
+  // ⑯ 修:profile 加载中不再 fallback 'member' — 否则 admin-only 菜单项(老板大屏/成员管理)
+  // 会先被 filter 掉,profile 加载完成后再出现,视觉上闪一下。
+  // 未加载时返回空列表,nav 区域整体不渲染菜单项(布局其他部分仍正常)。
+  const visibleItems = profile
+    ? navItems.filter(item => item.roles.includes(profile.role))
+    : []
 
   return (
     <>

@@ -78,8 +78,18 @@ export function BellNotification() {
 
   useEffect(() => {
     loadReminders()
-    const interval = setInterval(loadReminders, 60000) // Refresh every 60 seconds
-    return () => clearInterval(interval)
+    // 修 #12: 顶部铃铛角标也要响应 'reminders-changed' 事件 + visibilitychange，
+    // 否则完成提醒后铃铛红点要等 60s 才更新（sidebar 已修，铃铛此前漏了）。
+    const interval = setInterval(loadReminders, 15000)
+    const onChange = () => loadReminders()
+    const onVisible = () => { if (!document.hidden) loadReminders() }
+    window.addEventListener('reminders-changed', onChange)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('reminders-changed', onChange)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [loadReminders])
 
   // Close dropdown when clicking outside
@@ -124,6 +134,7 @@ export function BellNotification() {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
+        aria-label="待办提醒"
         className="relative p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
       >
         <Bell size={20} />

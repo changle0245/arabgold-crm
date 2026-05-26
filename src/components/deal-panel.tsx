@@ -169,19 +169,9 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
         return
       }
       dealId = editingId
-
-      // Replace items
-      const { error: delErr } = await supabase
-        .from('deal_items')
-        .delete()
-        .eq('deal_id', editingId)
-      if (delErr) {
-        alert('明细更新失败: ' + delErr.message)
-        setSaving(false)
-        return
-      }
     } else {
-      const isReorder = deals.length > 0
+      // L9: 排除已取消的成交单 —— 唯一历史单若是 cancelled,本单仍属首单、不算返单
+      const isReorder = deals.some(d => d.status !== 'cancelled')
       const { data: newDeal, error } = await supabase.from('deals').insert({
         customer_id: customerId,
         quotation_id: quotationId || null,
@@ -204,9 +194,10 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
       dealId = newDeal.id
     }
 
-    if (dealId && validItems.length > 0) {
+    // H3: 明细用事务型 RPC 原子替换(删+插同一事务),插入失败会回滚,
+    // 不会静默丢失。编辑时即便清空明细也要调用 RPC 才能把旧明细删掉。
+    if (dealId) {
       const lineItems = validItems.map(it => ({
-        deal_id: dealId,
         product_name: it.product_name,
         spec: it.spec || null,
         quantity: Number(it.quantity) || 0,
@@ -215,7 +206,15 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
         amount: Number(it.amount) || 0,
         remark: it.remark || null,
       }))
-      await supabase.from('deal_items').insert(lineItems)
+      const { error: itemsErr } = await supabase.rpc('replace_deal_items', {
+        p_deal_id: dealId,
+        p_items: lineItems,
+      })
+      if (itemsErr) {
+        alert('明细保存失败: ' + itemsErr.message)
+        setSaving(false)
+        return
+      }
     }
 
     setSaving(false)
@@ -471,7 +470,7 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
                           type="button"
                           onClick={() => deleteDeal(d)}
                           className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"
-                          title="删除"
+                          title="删除此成交单。规则：客户累计成交额/次数会自动重算"
                         >
                           <Trash2 size={13} />
                         </button>

@@ -18,6 +18,9 @@ export default function MembersPage() {
   const [form, setForm] = useState({ email: '', password: '', full_name: '', role: 'member', job_title: '业务员' })
   const [editForm, setEditForm] = useState({ full_name: '', role: 'member', job_title: '业务员', is_active: true })
   const [saving, setSaving] = useState(false)
+  const [resetPwId, setResetPwId] = useState<string | null>(null)
+  const [newPassword, setNewPassword] = useState('')
+  const [resetting, setResetting] = useState(false)
 
   useEffect(() => {
     if (!authLoading && !isAdmin) {
@@ -36,6 +39,11 @@ export default function MembersPage() {
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault()
+    // 修 #7: 前端拦截弱密码，给即时反馈
+    if (form.password.length < 6) {
+      alert('密码至少 6 位')
+      return
+    }
     setSaving(true)
     const res = await fetch('/api/members', {
       method: 'POST',
@@ -76,6 +84,27 @@ export default function MembersPage() {
     setSaving(false)
   }
 
+  async function handleResetPassword() {
+    if (!resetPwId) return
+    if (newPassword.length < 6) { alert('新密码至少 6 位'); return }
+    setResetting(true)
+    const res = await fetch(`/api/members/${resetPwId}/password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_password: newPassword }),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      alert('重置失败: ' + data.error)
+      setResetting(false)
+      return
+    }
+    alert('密码已重置。该成员下次登录后会被强制修改密码。')
+    setResetPwId(null)
+    setNewPassword('')
+    setResetting(false)
+  }
+
   if (!isAdmin) return null
   if (loading) return <div className="p-6 text-gray-400">加载中...</div>
 
@@ -106,7 +135,7 @@ export default function MembersPage() {
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">初始密码 *</label>
-              <input required type="text" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} className="input" placeholder="至少6位" />
+              <input required type="text" minLength={6} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} className="input" placeholder="至少6位（后端强制）" />
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">角色</label>
@@ -129,6 +158,50 @@ export default function MembersPage() {
             <button type="button" onClick={() => setShowAdd(false)} className="px-4 py-2 text-sm text-gray-500 cursor-pointer">取消</button>
           </div>
         </form>
+      )}
+
+      {resetPwId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => { if (!resetting) { setResetPwId(null); setNewPassword('') } }}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl max-w-md w-full p-5"
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 className="text-base font-semibold text-gray-900 mb-2">
+              重置「{members.find(m => m.id === resetPwId)?.full_name}」的密码
+            </h3>
+            <p className="text-sm text-gray-600 mb-4">
+              请输入新的初始密码（至少 6 位）。设置后该成员下次登录将被强制修改密码。
+            </p>
+            <input
+              type="text"
+              value={newPassword}
+              onChange={e => setNewPassword(e.target.value)}
+              autoFocus
+              disabled={resetting}
+              placeholder="新密码"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gold-500 mb-4"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => { setResetPwId(null); setNewPassword('') }}
+                disabled={resetting}
+                className="px-4 py-2 text-sm text-gray-600 cursor-pointer disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleResetPassword}
+                disabled={resetting || newPassword.length < 6}
+                className="px-4 py-2 bg-gold-600 text-white text-sm rounded-lg hover:bg-gold-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {resetting ? '重置中…' : '确认重置'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -169,6 +242,7 @@ export default function MembersPage() {
                         <label className="flex items-center gap-1.5 text-xs text-gray-500">
                           <input type="checkbox" checked={editForm.is_active} onChange={e => setEditForm({ ...editForm, is_active: e.target.checked })} />
                           在职
+                          <span className="text-[10px] text-gray-400">（取消勾选 = 离职，账号停用但数据保留）</span>
                         </label>
                       </div>
                       <button type="submit" disabled={saving} className="px-3 py-2 bg-gold-600 text-white rounded-lg text-xs hover:bg-gold-700 disabled:opacity-50 cursor-pointer">保存</button>
@@ -190,7 +264,15 @@ export default function MembersPage() {
                       </span>
                     </td>
                     <td className="py-3 px-4">
-                      <button onClick={() => startEdit(m)} className="text-sm text-gold-600 hover:text-gold-700 cursor-pointer">编辑</button>
+                      <div className="flex gap-3">
+                        <button onClick={() => startEdit(m)} className="text-sm text-gold-600 hover:text-gold-700 cursor-pointer">编辑</button>
+                        <button
+                          onClick={() => { setResetPwId(m.id); setNewPassword('') }}
+                          className="text-sm text-gray-500 hover:text-orange-600 cursor-pointer"
+                        >
+                          重置密码
+                        </button>
+                      </div>
                     </td>
                   </>
                 )}

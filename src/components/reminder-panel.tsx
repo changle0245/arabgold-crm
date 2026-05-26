@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuth } from './auth-provider'
 import type { Reminder, Profile } from '@/lib/types'
 import { REMINDER_TYPES, REMINDER_TYPE_LABELS } from '@/lib/constants'
-import { Bell, Check, X, Plus, Clock } from 'lucide-react'
+import { Bell, Check, X, Plus, Clock, Rewind } from 'lucide-react'
 import { daysFromNow, todayLocalISO, addDays } from '@/lib/dates'
 
 interface Props {
@@ -61,12 +61,15 @@ export function ReminderPanel({ customerId, reminders, members, canEdit, onRefre
     setShowForm(false)
     resetForm()
     onRefresh()
+    // 修 #12: 通知 sidebar 立即刷新红圈
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('reminders-changed'))
   }
 
   async function markStatus(id: string, status: string) {
     const supabase = createClient()
     await supabase.from('reminders').update({ status }).eq('id', id)
     onRefresh()
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('reminders-changed'))
   }
 
   async function postpone(id: string, days: number) {
@@ -75,6 +78,7 @@ export function ReminderPanel({ customerId, reminders, members, canEdit, onRefre
     if (!r?.due_date) return
     await supabase.from('reminders').update({ due_date: addDays(r.due_date, days) }).eq('id', id)
     onRefresh()
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('reminders-changed'))
   }
 
   return (
@@ -165,6 +169,10 @@ export function ReminderPanel({ customerId, reminders, members, canEdit, onRefre
                 </div>
                 {canEdit && (
                   <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => postpone(r.id, -1)} title="提前1天"
+                      className="p-1 text-gray-400 hover:text-gray-600 cursor-pointer">
+                      <Rewind size={14} />
+                    </button>
                     <button onClick={() => postpone(r.id, 1)} title="推迟1天"
                       className="p-1 text-gray-400 hover:text-gray-600 cursor-pointer">
                       <Clock size={14} />

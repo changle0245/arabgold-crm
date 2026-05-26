@@ -1,4 +1,9 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+ArabGold CRM — Next.js 16 + Supabase + Tailwind 4。详细业务规则见 [`docs/业务规则.md`](docs/业务规则.md);上线前待办见 [`docs/上线前待办清单.md`](docs/上线前待办清单.md)。
+
+## 开发模式说明
+
+- **dev 首次启动需 20-30s**:Turbopack 冷启动正常现象,与生产无关(`npm run build` 出包 ~40s,运行时无影响)。
+- **dev 偶发 `/customers/[id]/edit` 404**:Turbopack 增量编译偶发丢识别。处理方式:清 `.next` 重启 dev。生产构建(`npm run build && npm start`)不复现,已实测验证(2026-05-25)。
 
 ## Getting Started
 

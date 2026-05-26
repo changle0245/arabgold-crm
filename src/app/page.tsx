@@ -3,14 +3,15 @@ import { createClient } from '@/lib/supabase/server'
 
 export default async function Home() {
   const supabase = await createClient()
-  const { data: { session } } = await supabase.auth.getSession()
+  // H6: getUser() 向 Auth 服务器复验 JWT;getSession() 只解 cookie 不复验。
+  const { data: { user } } = await supabase.auth.getUser()
 
-  if (!session?.user) redirect('/login')
+  if (!user) redirect('/login')
 
   const { data: profile } = await supabase
     .from('profiles')
     .select('role, is_active')
-    .eq('id', session.user.id)
+    .eq('id', user.id)
     .single()
 
   if (!profile || profile.is_active === false) {

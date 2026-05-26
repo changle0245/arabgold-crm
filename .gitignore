@@ -49,3 +49,16 @@ supabase-start.log
 dev.log
 dev.err.log
 nul
+
+# log variants (with dash)
+dev-err.log
+dev-run.log
+prod-run.log
+
+# supabase studio 临时 query
+supabase/snippets/
+
+# 大目录(测试 artifact / DB 备份)
+playwright-report/
+test-results/
+backups/

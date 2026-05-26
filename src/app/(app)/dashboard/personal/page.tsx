@@ -7,7 +7,8 @@ import { useAuth } from '@/components/auth-provider'
 import type { Customer, Profile, Reminder } from '@/lib/types'
 import { OVERDUE_DAYS_THRESHOLD, SILENT_DAYS_THRESHOLD, REMINDER_TYPE_LABELS } from '@/lib/constants'
 import { Users, AlertTriangle, MessageSquare, UserPlus, Bell, Check, Calendar, TrendingUp, PieChart } from 'lucide-react'
-import { daysSince, daysFromNow, todayLocalISO } from '@/lib/dates'
+import { daysSince, daysFromNow, todayLocalISO, addDays } from '@/lib/dates'
+import { currencySymbol, sumInMainCurrency } from '@/lib/currency'
 
 export default function PersonalDashboard() {
   const { profile } = useAuth()
@@ -21,25 +22,24 @@ export default function PersonalDashboard() {
   const [monthlyStats, setMonthlyStats] = useState({ newCustomers: 0, logs: 0, stageChanges: 0, deals: 0 })
   const [myMonthRevenue, setMyMonthRevenue] = useState(0)
   const [companyMonthRevenue, setCompanyMonthRevenue] = useState(0)
+  const [mainCurrency, setMainCurrency] = useState<string>('USD')
 
   const load = async () => {
     if (!profile?.id) return
     const supabase = createClient()
     const today = todayLocalISO()
 
-    // Calculate date ranges for P1-2
-    const now = new Date()
-    const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+    // M4: 日期范围全部基于 CN 本地日期(today = todayLocalISO()),不用
+    // new Date().toISOString() —— 那是 UTC,CN 凌晨 0-8 点会偏一天(见 dates.ts)。
+    const monthStart = today.slice(0, 8) + '01'
 
-    // Get Monday of current week (ISO week starts on Monday)
-    const dayOfWeek = now.getDay()
-    const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek // Sunday is 0, Monday is 1
-    const weekStart = new Date(now)
-    weekStart.setDate(now.getDate() + diff)
-    weekStart.setHours(0, 0, 0, 0)
-    const weekStartStr = weekStart.toISOString()
+    // 本周一(ISO 周,周一为首),按 CN 本地日期算
+    const [ty, tm, td] = today.split('-').map(Number)
+    const dow = new Date(ty, tm - 1, td).getDay() // 0=周日..6=周六
+    const weekStartDate = addDays(today, -(dow === 0 ? 6 : dow - 1)) // 'YYYY-MM-DD'
+    const weekStartTs = `${weekStartDate}T00:00:00+08:00` // timestamptz 列用
 
-    const [{ data: custs }, { count: newCount }, { count: logCount }, { data: reminderRows }, { count: weekCustomers }, { count: monthCustomers }, { count: weekLogs }, { count: monthLogs }, { count: weekStageChanges }, { count: monthStageChanges }, { data: weekDeals }, { data: monthDeals }, { data: myMonthDeals }, { data: allMonthDeals }] = await Promise.all([
+    const [{ data: custs }, { count: newCount }, { count: logCount }, { data: reminderRows }, { count: weekCustomers }, { count: monthCustomers }, { count: weekLogs }, { count: monthLogs }, { count: weekStageChanges }, { count: monthStageChanges }, { data: weekDeals }, { data: monthDeals }, { data: myMonthDeals }, { data: companyRevenueRaw }, { data: mainCurrencyRow }] = await Promise.all([
       supabase
         .from('customers')
         .select('*')
@@ -66,7 +66,7 @@ export default function PersonalDashboard() {
         .from('customers')
         .select('*', { count: 'exact', head: true })
         .eq('created_by', profile.id)
-        .gte('created_at', weekStartStr),
+        .gte('created_at', weekStartTs),
       supabase
         .from('customers')
         .select('*', { count: 'exact', head: true })
@@ -76,7 +76,7 @@ export default function PersonalDashboard() {
         .from('contact_logs')
         .select('*', { count: 'exact', head: true })
         .eq('logged_by', profile.id)
-        .gte('log_date', weekStart.toISOString().split('T')[0]),
+        .gte('log_date', weekStartDate),
       supabase
         .from('contact_logs')
         .select('*', { count: 'exact', head: true })
@@ -86,7 +86,7 @@ export default function PersonalDashboard() {
         .from('stage_changes')
         .select('*', { count: 'exact', head: true })
         .eq('changed_by', profile.id)
-        .gte('changed_at', weekStartStr),
+        .gte('changed_at', weekStartTs),
       supabase
         .from('stage_changes')
         .select('*', { count: 'exact', head: true })
@@ -96,22 +96,30 @@ export default function PersonalDashboard() {
         .from('deals')
         .select('*', { count: 'exact' })
         .eq('created_by', profile.id)
-        .gte('deal_date', weekStart.toISOString().split('T')[0]),
+        .neq('status', 'cancelled')
+        .gte('deal_date', weekStartDate),
       supabase
         .from('deals')
         .select('*', { count: 'exact' })
         .eq('created_by', profile.id)
+        .neq('status', 'cancelled')
         .gte('deal_date', monthStart),
-      // P1-2.2: Revenue comparison
+      // P1-2.2: Revenue comparison — 修 #11: select currency 以便按主货币过滤
       supabase
         .from('deals')
-        .select('deal_amount')
+        .select('deal_amount, currency')
         .eq('created_by', profile.id)
+        .neq('status', 'cancelled')
         .gte('deal_date', monthStart),
+      // H1: 公司总成交额改用 SECURITY DEFINER RPC —— deals 表 RLS 会把
+      // member 的直查限制成只看自己名下,否则占比分母恒等于分子(永远 100%)。
+      supabase.rpc('get_company_month_revenue', { p_month_start: monthStart }),
+      // 修 #11: 读取主货币设置
       supabase
-        .from('deals')
-        .select('deal_amount')
-        .gte('deal_date', monthStart),
+        .from('system_settings')
+        .select('value')
+        .eq('key', 'main_currency')
+        .maybeSingle(),
     ])
     setMyCustomers(custs || [])
     setTodayNewCount(newCount || 0)
@@ -132,9 +140,14 @@ export default function PersonalDashboard() {
       deals: monthDeals?.length || 0
     })
 
-    // P1-2.2: Calculate revenue
-    const myRevenue = (myMonthDeals || []).reduce((sum, d) => sum + (d.deal_amount || 0), 0)
-    const companyRevenue = (allMonthDeals || []).reduce((sum, d) => sum + (d.deal_amount || 0), 0)
+    // 修 #11: 主货币（默认 USD）
+    const mcVal = (mainCurrencyRow as { value?: unknown } | null)?.value
+    const mc = (typeof mcVal === 'string' && mcVal.length > 0 ? mcVal : 'USD').toUpperCase()
+    setMainCurrency(mc)
+
+    // P1-2.2: Calculate revenue — 修 #11: 只统计主货币，避免跨币种直接累加
+    const myRevenue = sumInMainCurrency(myMonthDeals || [], mc)
+    const companyRevenue = Number(companyRevenueRaw) || 0
     setMyMonthRevenue(myRevenue)
     setCompanyMonthRevenue(companyRevenue)
 
@@ -147,17 +160,20 @@ export default function PersonalDashboard() {
     const supabase = createClient()
     await supabase.from('reminders').update({ status: 'completed' }).eq('id', id)
     load()
+    // 修 #12: 通知 sidebar 立即刷新红圈
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('reminders-changed'))
   }
 
   if (loading) return <div className="p-6 text-gray-400">加载中...</div>
 
-  // "Overdue" = has a real last_contact_date AND it's older than threshold
-  // (Newly added customers with null contact date are NOT counted as overdue yet)
+  // 修 #1: daysSince(null) === 9999（dates.ts 设计：never recorded → overdue forever）。
+  // 从未联系过的客户应计入"超期"和"沉默"——逻辑上他们更需要被跟进，旧逻辑用
+  // c.last_contact_date && ... 把 null 静默排除，导致大屏数字偏低。
   const overdueCustomers = myCustomers.filter(c =>
-    c.last_contact_date && daysSince(c.last_contact_date) >= OVERDUE_DAYS_THRESHOLD
+    daysSince(c.last_contact_date) >= OVERDUE_DAYS_THRESHOLD
   )
   const silentCustomers = myCustomers.filter(c =>
-    c.last_contact_date && daysSince(c.last_contact_date) >= SILENT_DAYS_THRESHOLD && c.stage !== '已成交'
+    daysSince(c.last_contact_date) >= SILENT_DAYS_THRESHOLD && c.stage !== '已成交'
   )
   const overdueReminders = myReminders.filter(r => daysFromNow(r.due_date) < 0)
   const todayReminders = myReminders.filter(r => daysFromNow(r.due_date) === 0)
@@ -287,15 +303,15 @@ export default function PersonalDashboard() {
           <div className="space-y-3">
             <div className="flex items-end justify-between">
               <div>
-                <p className="text-xs text-gray-500 mb-1">我的成交额</p>
+                <p className="text-xs text-gray-500 mb-1">我的成交额 ({mainCurrency})</p>
                 <p className="text-2xl font-bold text-gold-700">
-                  ${myMonthRevenue >= 10000 ? (myMonthRevenue / 10000).toFixed(1) + 'w' : myMonthRevenue.toLocaleString()}
+                  {currencySymbol(mainCurrency)}{myMonthRevenue >= 10000 ? (myMonthRevenue / 10000).toFixed(1) + 'w' : myMonthRevenue.toLocaleString()}
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-xs text-gray-500 mb-1">公司总成交额</p>
+                <p className="text-xs text-gray-500 mb-1">公司总成交额 ({mainCurrency})</p>
                 <p className="text-lg font-medium text-gray-600">
-                  ${companyMonthRevenue >= 10000 ? (companyMonthRevenue / 10000).toFixed(1) + 'w' : companyMonthRevenue.toLocaleString()}
+                  {currencySymbol(mainCurrency)}{companyMonthRevenue >= 10000 ? (companyMonthRevenue / 10000).toFixed(1) + 'w' : companyMonthRevenue.toLocaleString()}
                 </p>
               </div>
             </div>

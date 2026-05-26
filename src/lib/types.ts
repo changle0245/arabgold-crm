@@ -4,6 +4,7 @@ export interface Profile {
   role: 'admin' | 'member'
   job_title: string
   is_active: boolean
+  must_change_password: boolean
   created_at: string
 }
 
@@ -179,10 +180,37 @@ export interface Sample {
 export type TimelineEvent = {
   id: string
   date: string
-  type: 'contact' | 'quotation' | 'deal' | 'sample' | 'stage_change' | 'reminder'
+  type: 'contact' | 'quotation' | 'deal' | 'sample' | 'stage_change' | 'reminder' | 'ownership_change' | 'whatsapp' | 'wechat' | 'email'
   title: string
   detail: string | null
   user: string | null
+  // 仅 whatsapp/wechat/email 事件填：原文 + 译文（用于切换显示和修订）
+  original?: string | null
+  translated?: string | null
+  translatedEditedBy?: string | null     // 修订人名（非 uuid）
+  attachments?: { name: string; url: string }[]
+}
+
+// ── Phase 2 阶段 2：沟通归档 ──
+
+export interface CommunicationLog {
+  id: string
+  customer_id: string
+  channel: 'whatsapp' | 'wechat' | 'email'
+  direction: 'outgoing' | 'incoming'
+  sender_name: string | null
+  content: string | null
+  translated_content: string | null
+  translation_edited_by: string | null
+  translation_edited_at: string | null
+  sent_at: string
+  raw_meta: Record<string, unknown> | null
+  original_file_url: string | null
+  created_by: string | null
+  created_at: string
+  // 联表
+  editor?: Profile
+  creator?: Profile
 }
 
 // ── Phase 3 ──

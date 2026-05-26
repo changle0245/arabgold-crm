@@ -141,19 +141,9 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
         return
       }
 
-      const { error: delErr } = await supabase
-        .from('quotation_items')
-        .delete()
-        .eq('quotation_id', editingId)
-
-      if (delErr) {
-        alert('明细更新失败: ' + delErr.message)
-        setSaving(false)
-        return
-      }
-
+      // H3: 明细用事务型 RPC 原子替换(删+插同一事务)。插入失败整体回滚,
+      // 不会出现"旧明细已删、新明细没进去"的静默丢失。
       const lineItems = validItems.map(it => ({
-        quotation_id: editingId,
         product_name: it.product_name,
         spec: it.spec || null,
         quantity: Number(it.quantity) || 0,
@@ -162,7 +152,15 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
         amount: Number(it.amount) || 0,
         remark: it.remark || null,
       }))
-      await supabase.from('quotation_items').insert(lineItems)
+      const { error: itemsErr } = await supabase.rpc('replace_quotation_items', {
+        p_quotation_id: editingId,
+        p_items: lineItems,
+      })
+      if (itemsErr) {
+        alert('明细更新失败: ' + itemsErr.message)
+        setSaving(false)
+        return
+      }
     } else {
       // INSERT new quotation (either first version or new version of an existing chain)
       const version = parentId ? parentVersion + 1 : 1
@@ -187,7 +185,6 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
       }
 
       const lineItems = validItems.map(it => ({
-        quotation_id: q.id,
         product_name: it.product_name,
         spec: it.spec || null,
         quantity: Number(it.quantity) || 0,
@@ -196,8 +193,14 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
         amount: Number(it.amount) || 0,
         remark: it.remark || null,
       }))
-      if (lineItems.length > 0) {
-        await supabase.from('quotation_items').insert(lineItems)
+      const { error: itemsErr } = await supabase.rpc('replace_quotation_items', {
+        p_quotation_id: q.id,
+        p_items: lineItems,
+      })
+      if (itemsErr) {
+        alert('明细保存失败: ' + itemsErr.message)
+        setSaving(false)
+        return
       }
     }
 
@@ -528,7 +531,7 @@ function QuotationDetail({ quotation: q, canEdit, onEdit, onDelete, onStatusChan
                 type="button"
                 onClick={onDelete}
                 className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"
-                title="删除此版本"
+                title="删除此版本。规则：若此版本有更新版本（子版本），需先删新版本"
               >
                 <Trash2 size={13} />
               </button>

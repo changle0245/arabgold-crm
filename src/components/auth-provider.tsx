@@ -36,6 +36,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return false
     }
 
+    // Forces redirect to change-password page when the member's password hasn't been changed yet.
+    // Does NOT sign out — the user stays authenticated, only routes outside /account/change-password are blocked.
+    function enforcePasswordChange(p: Profile | null) {
+      if (!p?.must_change_password) return
+      if (typeof window === 'undefined') return
+      const pathname = window.location.pathname
+      if (pathname.startsWith('/account/change-password') || pathname.startsWith('/login')) return
+      window.location.replace('/account/change-password')
+    }
+
     async function loadProfile() {
       const { data: { session } } = await supabase.auth.getSession()
       if (session?.user) {
@@ -45,7 +55,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .eq('id', session.user.id)
           .single()
         const stopped = await enforceActiveOrSignOut(data)
-        if (!stopped) setProfile(data)
+        if (!stopped) {
+          setProfile(data)
+          enforcePasswordChange(data)
+        }
       }
       setLoading(false)
     }
@@ -64,7 +77,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             .eq('id', userId)
             .single()
           const stopped = await enforceActiveOrSignOut(data)
-          if (!stopped) setProfile(data)
+          if (!stopped) {
+            setProfile(data)
+            enforcePasswordChange(data)
+          }
         }, 0)
       }
     })

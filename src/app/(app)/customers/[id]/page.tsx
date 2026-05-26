@@ -11,9 +11,13 @@ import { QuotationPanel } from '@/components/quotation-panel'
 import { DealPanel } from '@/components/deal-panel'
 import { SamplePanel } from '@/components/sample-panel'
 import { ReminderPanel } from '@/components/reminder-panel'
-import type { Customer, ContactLog, CustomerAttachment, Profile, Quotation, Deal, Sample, Reminder, TimelineEvent } from '@/lib/types'
+import { ConfirmModal } from '@/components/confirm-modal'
+import { ChatImportModal } from '@/components/chat-import-modal'
+import { RecordEmailModal } from '@/components/record-email-modal'
+import { TranslationEditModal } from '@/components/translation-edit-modal'
+import type { Customer, ContactLog, CustomerAttachment, Profile, Quotation, Deal, Sample, Reminder, TimelineEvent, CommunicationLog } from '@/lib/types'
 import { CONTACT_TAGS, QUOTATION_STATUS_LABELS, DEAL_STATUS_LABELS, SAMPLE_STATUS_LABELS, REMINDER_TYPE_LABELS } from '@/lib/constants'
-import { Pencil, Trash2, Upload, Plus, ArrowLeft, FileText, Image as ImageIcon, Phone, Package, Truck, TrendingUp, Check } from 'lucide-react'
+import { Pencil, Trash2, Upload, Plus, ArrowLeft, FileText, Image as ImageIcon, Phone, Package, Truck, TrendingUp, Check, UserCog, MessageSquare, Mail } from 'lucide-react'
 import { todayLocalISO } from '@/lib/dates'
 
 const typeMeta: Record<TimelineEvent['type'], {
@@ -22,12 +26,16 @@ const typeMeta: Record<TimelineEvent['type'], {
   chipClass: string
   iconClass: string
 }> = {
-  contact:      { icon: Phone,       label: '联系', chipClass: 'bg-gold-50 text-gold-700',     iconClass: 'text-gold-500' },
-  quotation:    { icon: FileText,    label: '报价', chipClass: 'bg-blue-50 text-blue-700',     iconClass: 'text-blue-500' },
-  deal:         { icon: Package,     label: '成交', chipClass: 'bg-green-50 text-green-700',   iconClass: 'text-green-500' },
-  sample:       { icon: Truck,       label: '样品', chipClass: 'bg-purple-50 text-purple-700', iconClass: 'text-purple-500' },
-  stage_change: { icon: TrendingUp,  label: '阶段', chipClass: 'bg-amber-50 text-amber-700',   iconClass: 'text-amber-500' },
-  reminder:     { icon: Check,       label: '提醒', chipClass: 'bg-gray-100 text-gray-600',    iconClass: 'text-gray-400' },
+  contact:          { icon: Phone,         label: '联系',     chipClass: 'bg-gold-50 text-gold-700',         iconClass: 'text-gold-500' },
+  quotation:        { icon: FileText,      label: '报价',     chipClass: 'bg-blue-50 text-blue-700',         iconClass: 'text-blue-500' },
+  deal:             { icon: Package,       label: '成交',     chipClass: 'bg-green-50 text-green-700',       iconClass: 'text-green-500' },
+  sample:           { icon: Truck,         label: '样品',     chipClass: 'bg-purple-50 text-purple-700',     iconClass: 'text-purple-500' },
+  stage_change:     { icon: TrendingUp,    label: '阶段',     chipClass: 'bg-amber-50 text-amber-700',       iconClass: 'text-amber-500' },
+  reminder:         { icon: Check,         label: '提醒',     chipClass: 'bg-gray-100 text-gray-600',        iconClass: 'text-gray-400' },
+  ownership_change: { icon: UserCog,       label: '转单',     chipClass: 'bg-pink-50 text-pink-700',         iconClass: 'text-pink-500' },
+  whatsapp:         { icon: MessageSquare, label: 'WhatsApp', chipClass: 'bg-emerald-50 text-emerald-700',   iconClass: 'text-emerald-500' },
+  wechat:           { icon: MessageSquare, label: '微信',     chipClass: 'bg-green-50 text-green-700',       iconClass: 'text-green-500' },
+  email:            { icon: Mail,          label: '邮件',     chipClass: 'bg-indigo-50 text-indigo-700',     iconClass: 'text-indigo-500' },
 }
 
 type Tab = 'overview' | 'quotations' | 'deals' | 'samples'
@@ -44,8 +52,12 @@ export default function CustomerDetailPage() {
   const [deals, setDeals] = useState<Deal[]>([])
   const [samples, setSamples] = useState<Sample[]>([])
   const [stageChanges, setStageChanges] = useState<{ id: string; from_stage: string | null; to_stage: string; changed_at: string; changed_by_name: string }[]>([])
+  const [ownershipChanges, setOwnershipChanges] = useState<{ id: string; from_owner_name: string | null; to_owner_name: string; changed_at: string; changed_by_name: string }[]>([])
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [members, setMembers] = useState<Profile[]>([])
+  const [communicationLogs, setCommunicationLogs] = useState<(CommunicationLog & { editor?: Profile })[]>([])
+  const [commTotal, setCommTotal] = useState(0)
+  const [showOriginalIds, setShowOriginalIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [showLogForm, setShowLogForm] = useState(false)
@@ -55,6 +67,11 @@ export default function CustomerDetailPage() {
   const [savingLog, setSavingLog] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [dealPrefill, setDealPrefill] = useState<Quotation | null>(null)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [showImportChat, setShowImportChat] = useState(false)
+  const [showRecordEmail, setShowRecordEmail] = useState(false)
+  const [editingTranslation, setEditingTranslation] = useState<{ logId: string; original: string | null; translated: string | null } | null>(null)
 
   const loadData = useCallback(async () => {
     const supabase = createClient()
@@ -67,8 +84,10 @@ export default function CustomerDetailPage() {
       { data: dealRows },
       { data: sampleRows },
       { data: stageRows },
+      { data: ownershipRows },
       { data: reminderRows },
       { data: memberRows },
+      { data: commLogs, count: commCount },
     ] = await Promise.all([
       supabase
         .from('customers')
@@ -107,6 +126,11 @@ export default function CustomerDetailPage() {
         .eq('customer_id', id)
         .order('changed_at', { ascending: false }),
       supabase
+        .from('customer_ownership_changes')
+        .select('*, changer:profiles!customer_ownership_changes_changed_by_fkey(full_name), from_profile:profiles!customer_ownership_changes_from_owner_fkey(full_name), to_profile:profiles!customer_ownership_changes_to_owner_fkey(full_name)')
+        .eq('customer_id', id)
+        .order('changed_at', { ascending: false }),
+      supabase
         .from('reminders')
         .select('*, assignee:profiles!reminders_assigned_to_fkey(*)')
         .eq('customer_id', id)
@@ -115,6 +139,12 @@ export default function CustomerDetailPage() {
         .from('profiles')
         .select('*')
         .eq('is_active', true),
+      supabase
+        .from('communication_logs')
+        .select('*, editor:profiles!communication_logs_translation_edited_by_fkey(full_name)', { count: 'exact' })
+        .eq('customer_id', id)
+        .order('sent_at', { ascending: false })
+        .limit(200),
     ])
     setCustomer(cust)
     setLogs(contactLogs || [])
@@ -130,10 +160,28 @@ export default function CustomerDetailPage() {
       changed_at: s.changed_at,
       changed_by_name: s.changer?.full_name || '',
     })))
+    setOwnershipChanges((ownershipRows || []).map((o: any) => ({
+      id: o.id,
+      from_owner_name: o.from_profile?.full_name || null,
+      to_owner_name: o.to_profile?.full_name || '',
+      changed_at: o.changed_at,
+      changed_by_name: o.changer?.full_name || '',
+    })))
     setReminders((reminderRows as Reminder[]) || [])
     setMembers((memberRows as Profile[]) || [])
+    setCommunicationLogs((commLogs as (CommunicationLog & { editor?: Profile })[]) || [])
+    setCommTotal(commCount || 0)
     setLoading(false)
   }, [id])
+
+  function toggleShowOriginal(eventId: string) {
+    setShowOriginalIds(prev => {
+      const next = new Set(prev)
+      if (next.has(eventId)) next.delete(eventId)
+      else next.add(eventId)
+      return next
+    })
+  }
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -199,15 +247,25 @@ export default function CustomerDetailPage() {
     loadData()
   }
 
-  async function handleDeleteCustomer() {
-    if (!confirm('确定删除此客户？所有关联的联系记录和附件都将被删除。此操作不可撤销。')) return
+  async function doDeleteCustomer() {
+    setDeleting(true)
     const supabase = createClient()
-    await supabase.from('customers').delete().eq('id', id)
+    const { error } = await supabase.from('customers').delete().eq('id', id)
+    if (error) {
+      alert('删除失败: ' + error.message)
+      setDeleting(false)
+      return
+    }
     router.push('/customers')
   }
 
   if (loading) return <div className="p-6 text-gray-400">加载中...</div>
-  if (!customer) return <div className="p-6 text-gray-400">客户不存在</div>
+  if (!customer) return (
+    <div className="p-6 space-y-2">
+      <p className="text-gray-500">客户不存在或您无权限查看</p>
+      <Link href="/customers" className="inline-block text-sm text-gold-600 hover:text-gold-700">← 返回客户列表</Link>
+    </div>
+  )
 
   const canEdit = isAdmin || customer.owner_id === profile?.id
 
@@ -253,6 +311,14 @@ export default function CustomerDetailPage() {
       detail: null,
       user: sc.changed_by_name || null,
     })),
+    ...ownershipChanges.map(oc => ({
+      id: `ownership-${oc.id}`,
+      date: oc.changed_at.split('T')[0],
+      type: 'ownership_change' as const,
+      title: `${oc.from_owner_name || '无'} → ${oc.to_owner_name}`,
+      detail: null,
+      user: oc.changed_by_name || null,
+    })),
     ...reminders
       .filter(r => r.status === 'completed' && r.completed_at)
       .map(r => ({
@@ -263,6 +329,23 @@ export default function CustomerDetailPage() {
         detail: r.note,
         user: r.assignee?.full_name || null,
       })),
+    ...communicationLogs.map(c => {
+      const meta = (c.raw_meta as Record<string, unknown> | null) || {}
+      const subject = meta.subject as string | undefined
+      const attachments = meta.attachments as { name: string; url: string }[] | undefined
+      return {
+        id: `comm-${c.id}`,
+        date: c.sent_at.split('T')[0],
+        type: c.channel,
+        title: `${c.direction === 'outgoing' ? '我方发出' : '客户发来'}${subject ? ' · ' + subject : ''}${c.sender_name ? ' · ' + c.sender_name : ''}`,
+        detail: c.translated_content || c.content || null,
+        user: c.direction === 'outgoing' ? '我方' : (customer.contact_name || null),
+        original: c.content,
+        translated: c.translated_content,
+        translatedEditedBy: c.editor?.full_name || null,
+        attachments,
+      } as TimelineEvent
+    }),
   ].sort((a, b) => b.date.localeCompare(a.date))
 
   const tabs: { key: Tab; label: string; count?: number }[] = [
@@ -304,6 +387,24 @@ export default function CustomerDetailPage() {
         </div>
         <div className="flex gap-2 shrink-0">
           {canEdit && (
+            <button
+              onClick={() => setShowImportChat(true)}
+              className="flex items-center gap-1.5 px-3 py-2 border border-emerald-200 rounded-lg text-sm text-emerald-700 hover:bg-emerald-50 transition-colors cursor-pointer"
+            >
+              <MessageSquare size={14} />
+              导入聊天
+            </button>
+          )}
+          {canEdit && (
+            <button
+              onClick={() => setShowRecordEmail(true)}
+              className="flex items-center gap-1.5 px-3 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 transition-colors cursor-pointer"
+            >
+              <Mail size={14} />
+              记录邮件
+            </button>
+          )}
+          {canEdit && (
             <Link
               href={`/customers/${id}/edit`}
               className="flex items-center gap-1.5 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors"
@@ -314,7 +415,7 @@ export default function CustomerDetailPage() {
           )}
           {isAdmin && (
             <button
-              onClick={handleDeleteCustomer}
+              onClick={() => setShowDeleteModal(true)}
               className="flex items-center gap-1.5 px-3 py-2 border border-red-200 rounded-lg text-sm text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
             >
               <Trash2 size={14} />
@@ -323,6 +424,83 @@ export default function CustomerDetailPage() {
           )}
         </div>
       </div>
+
+      {showImportChat && (
+        <ChatImportModal
+          customerId={id}
+          customerName={customer.contact_name}
+          onClose={() => setShowImportChat(false)}
+          onSuccess={(r) => {
+            setShowImportChat(false)
+            alert(`成功导入 ${r.imported} 条 ${r.channel === 'whatsapp' ? 'WhatsApp' : '微信'} 消息${r.skipped > 0 ? `（跳过 ${r.skipped} 行无法解析）` : ''}`)
+            loadData()
+          }}
+        />
+      )}
+
+      {showRecordEmail && (
+        <RecordEmailModal
+          customerId={id}
+          customerName={customer.contact_name}
+          onClose={() => setShowRecordEmail(false)}
+          onSuccess={(r) => {
+            setShowRecordEmail(false)
+            alert(`邮件已记录${r.attachmentCount > 0 ? `（含 ${r.attachmentCount} 个附件）` : ''}`)
+            loadData()
+          }}
+        />
+      )}
+
+      {editingTranslation && (
+        <TranslationEditModal
+          logId={editingTranslation.logId}
+          original={editingTranslation.original}
+          currentTranslated={editingTranslation.translated}
+          onClose={() => setEditingTranslation(null)}
+          onSuccess={() => {
+            setEditingTranslation(null)
+            loadData()
+          }}
+        />
+      )}
+
+      <ConfirmModal
+        open={showDeleteModal}
+        onClose={() => setShowDeleteModal(false)}
+        onConfirm={doDeleteCustomer}
+        title={`删除客户「${customer.contact_name}」？`}
+        description={
+          <>
+            <p>将永久删除以下全部关联数据：</p>
+            <ul className="list-disc pl-5 space-y-0.5 text-gray-700">
+              <li>{quotations.length} 个报价（含所有版本历史）</li>
+              <li>
+                {deals.length} 个成交单
+                {deals.length > 0 && (() => {
+                  const totals = deals.reduce<Record<string, number>>((acc, d) => {
+                    const cur = d.currency || 'USD'
+                    acc[cur] = (acc[cur] || 0) + Number(d.deal_amount || 0)
+                    return acc
+                  }, {})
+                  const summary = Object.entries(totals)
+                    .map(([cur, amt]) => `${cur} ${amt.toLocaleString(undefined, { maximumFractionDigits: 2 })}`)
+                    .join(' + ')
+                  return `（累计 ${summary}）`
+                })()}
+              </li>
+              <li>{samples.length} 个样品记录</li>
+              <li>{reminders.length} 个待办提醒</li>
+              <li>{attachments.length} 个附件</li>
+              <li>{logs.length} 条联系记录与全部阶段变更历史</li>
+            </ul>
+            <p className="text-red-600 font-medium pt-1">此操作不可撤销！</p>
+          </>
+        }
+        dangerLevel="high"
+        confirmPhrase={customer.contact_name}
+        confirmLabel="永久删除"
+        loading={deleting}
+      />
 
       {/* Tags */}
       {tags.length > 0 && (
@@ -523,9 +701,20 @@ export default function CustomerDetailPage() {
               <p className="text-sm text-gray-400">暂无事件</p>
             ) : (
               <div className="space-y-0">
+                {commTotal > communicationLogs.length && (
+                  <p className="text-xs text-gray-400 py-2">
+                    共 {commTotal} 条沟通记录，时间线仅显示最近 {communicationLogs.length} 条
+                  </p>
+                )}
                 {timelineEvents.map(ev => {
                   const meta = typeMeta[ev.type]
                   const Icon = meta.icon
+                  const isComm = ev.type === 'whatsapp' || ev.type === 'wechat' || ev.type === 'email'
+                  const hasTranslation = !!(ev.translated && ev.original && ev.translated !== ev.original)
+                  const showOriginal = showOriginalIds.has(ev.id)
+                  const displayText = isComm
+                    ? (showOriginal ? ev.original : (ev.translated || ev.original))
+                    : ev.detail
                   return (
                     <div key={ev.id} className="flex gap-3 py-3 border-t border-gray-100 first:border-t-0">
                       <Icon size={14} className={`${meta.iconClass} mt-1 shrink-0`} />
@@ -536,7 +725,55 @@ export default function CustomerDetailPage() {
                           <span className="text-sm text-gray-700">{ev.title}</span>
                           {ev.user && <span className="text-xs text-gray-400 ml-auto">{ev.user}</span>}
                         </div>
-                        {ev.detail && <p className="text-sm text-gray-600 mt-0.5">{ev.detail}</p>}
+                        {displayText && (
+                          <p className="text-sm text-gray-600 mt-0.5 whitespace-pre-wrap break-words">{displayText}</p>
+                        )}
+                        {isComm && (
+                          <div className="flex items-center gap-3 mt-1 text-xs flex-wrap">
+                            {hasTranslation && (
+                              <button
+                                onClick={() => toggleShowOriginal(ev.id)}
+                                className="text-gray-400 hover:text-gold-600 cursor-pointer"
+                              >
+                                {showOriginal ? '看译文' : '看原文'}
+                              </button>
+                            )}
+                            {!ev.translated && ev.original && (
+                              <span className="text-gray-300">(尚未翻译)</span>
+                            )}
+                            {canEdit && (
+                              <button
+                                onClick={() => {
+                                  const logId = ev.id.replace(/^comm-/, '')
+                                  const log = communicationLogs.find(c => c.id === logId)
+                                  if (log) {
+                                    setEditingTranslation({
+                                      logId: log.id,
+                                      original: log.content,
+                                      translated: log.translated_content,
+                                    })
+                                  }
+                                }}
+                                className="text-gray-400 hover:text-gold-600 cursor-pointer inline-flex items-center gap-1"
+                                title={ev.translated ? '修订译文' : '添加译文'}
+                              >
+                                <Pencil size={11} />
+                                {ev.translated ? '修订译文' : '添加译文'}
+                              </button>
+                            )}
+                            {ev.translatedEditedBy && (
+                              <span className="text-gray-300">已由 {ev.translatedEditedBy} 修订</span>
+                            )}
+                            {ev.attachments && ev.attachments.length > 0 && (
+                              <span className="flex flex-wrap gap-2">
+                                {ev.attachments.map(a => (
+                                  <a key={a.url} href={`/api/communication-files?path=${encodeURIComponent(a.url)}`} target="_blank" rel="noopener noreferrer"
+                                    className="text-indigo-600 hover:underline">📎 {a.name}</a>
+                                ))}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )

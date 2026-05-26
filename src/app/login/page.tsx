@@ -37,7 +37,7 @@ export default function LoginPage() {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role, is_active')
+      .select('role, is_active, must_change_password')
       .eq('id', signInData.user.id)
       .single()
 
@@ -48,11 +48,12 @@ export default function LoginPage() {
       return
     }
 
-    if (profile.role === 'admin') {
-      router.push('/dashboard/boss')
-    } else {
-      router.push('/dashboard/personal')
-    }
+    // 修 #4: 用 window.location.replace 做硬跳转，避免 router.push 在 React 状态结算过程中
+    // 让"登录中..."按钮卡 15+ 秒。硬跳转直接 kill 当前 SPA 状态，新页面 fresh 加载。
+    let target = '/dashboard/personal'
+    if (profile.must_change_password) target = '/account/change-password'
+    else if (profile.role === 'admin') target = '/dashboard/boss'
+    window.location.replace(target)
   }
 
   return (

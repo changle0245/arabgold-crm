@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/auth-provider'
+import { Pagination } from '@/components/pagination'
 import type { Quotation, Profile } from '@/lib/types'
 import { QUOTATION_STATUSES, QUOTATION_STATUS_LABELS } from '@/lib/constants'
 import { FileText, Search } from 'lucide-react'
@@ -12,11 +13,17 @@ type Row = Quotation & {
   customer?: { id: string; contact_name: string; company_name: string | null; owner_id: string; owner?: Profile }
 }
 
+const PAGE_SIZE = 30
+
 export default function QuotationsPage() {
   const { profile, isAdmin } = useAuth()
   const [rows, setRows] = useState<Row[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [members, setMembers] = useState<Profile[]>([])
+  // 当前页金额汇总（按币种）——仅当前页可见，老板要全量统计请去老板大屏
+  const [pageTotalsByCurrency, setPageTotalsByCurrency] = useState<Record<string, number>>({})
 
   const [scopeOverride, setScope] = useState<'mine' | 'all' | null>(null)
   const scope: 'mine' | 'all' = scopeOverride ?? (isAdmin ? 'all' : 'mine')
@@ -26,9 +33,38 @@ export default function QuotationsPage() {
   const [to, setTo] = useState<string>('')
   const [search, setSearch] = useState<string>('')
 
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.from('profiles').select('*').eq('is_active', true).then(({ data }) => {
+      setMembers((data as Profile[]) || [])
+    })
+  }, [])
+
   const load = useCallback(async () => {
     if (!profile?.id) return
+    setLoading(true)
     const supabase = createClient()
+
+    // Stage 1：根据 scope/owner/search 算出"可见客户 ids"
+    let scopedCustomerIds: string[] | null = null
+    if (scope === 'mine' || ownerFilter !== 'all') {
+      let cq = supabase.from('customers').select('id')
+      if (scope === 'mine') cq = cq.eq('owner_id', profile.id)
+      if (ownerFilter !== 'all') cq = cq.eq('owner_id', ownerFilter)
+      const { data } = await cq
+      scopedCustomerIds = (data || []).map(c => c.id)
+    }
+
+    let searchMatchedCustomerIds: string[] | null = null
+    if (search.trim()) {
+      const s = `%${search.trim()}%`
+      let cq = supabase.from('customers').select('id').or(`contact_name.ilike.${s},company_name.ilike.${s}`)
+      if (scopedCustomerIds !== null) cq = cq.in('id', scopedCustomerIds)
+      const { data } = await cq
+      searchMatchedCustomerIds = (data || []).map(c => c.id)
+    }
+
+    // Stage 2：主查询
     let query = supabase
       .from('quotations')
       .select(`
@@ -38,55 +74,51 @@ export default function QuotationsPage() {
           id, contact_name, company_name, owner_id,
           owner:profiles!customers_owner_id_fkey(*)
         )
-      `)
+      `, { count: 'exact' })
       .order('created_at', { ascending: false })
 
     if (status !== 'all') query = query.eq('status', status)
     if (from) query = query.gte('created_at', from)
     if (to) query = query.lte('created_at', to + 'T23:59:59')
 
-    const { data } = await query
-    setRows((data as Row[]) || [])
-    setLoading(false)
-  }, [profile?.id, status, from, to])
-
-  useEffect(() => { load() }, [load])
-
-  useEffect(() => {
-    async function loadMembers() {
-      const supabase = createClient()
-      const { data } = await supabase.from('profiles').select('*').eq('is_active', true)
-      setMembers((data as Profile[]) || [])
-    }
-    loadMembers()
-  }, [])
-
-  const filtered = useMemo(() => {
-    return rows.filter(r => {
-      if (scope === 'mine' && r.customer?.owner_id !== profile?.id) return false
-      if (ownerFilter !== 'all' && r.customer?.owner_id !== ownerFilter) return false
-      if (search.trim()) {
-        const s = search.trim().toLowerCase()
-        const hay = [
-          r.quote_no, r.customer?.contact_name, r.customer?.company_name,
-        ].filter(Boolean).join(' ').toLowerCase()
-        if (!hay.includes(s)) return false
+    if (scopedCustomerIds !== null) {
+      if (scopedCustomerIds.length === 0) {
+        setRows([]); setTotal(0); setPageTotalsByCurrency({}); setLoading(false); return
       }
-      return true
-    })
-  }, [rows, scope, ownerFilter, search, profile?.id])
+      query = query.in('customer_id', scopedCustomerIds)
+    }
 
-  // Aggregate totals (multi-currency)
-  const totalsByCurrency = useMemo(() => {
-    return filtered.reduce<Record<string, number>>((acc, r) => {
+    if (search.trim()) {
+      const s = `%${search.trim()}%`
+      if (searchMatchedCustomerIds && searchMatchedCustomerIds.length > 0) {
+        query = query.or(`quote_no.ilike.${s},customer_id.in.(${searchMatchedCustomerIds.join(',')})`)
+      } else {
+        query = query.ilike('quote_no', s)
+      }
+    }
+
+    const start = (page - 1) * PAGE_SIZE
+    const { data, count } = await query.range(start, start + PAGE_SIZE - 1)
+    const list = (data as Row[]) || []
+    setRows(list)
+    setTotal(count || 0)
+    const totals = list.reduce<Record<string, number>>((acc, r) => {
       if (!r.total_amount) return acc
       const cur = r.currency || 'USD'
       acc[cur] = (acc[cur] || 0) + r.total_amount
       return acc
     }, {})
-  }, [filtered])
+    setPageTotalsByCurrency(totals)
+    setLoading(false)
+  }, [profile?.id, status, from, to, scope, ownerFilter, search, page])
 
-  if (loading) return <div className="p-6 text-gray-400">加载中...</div>
+  useEffect(() => { load() }, [load])
+
+  function withReset<T>(setter: (v: T) => void) {
+    return (v: T) => { setter(v); setPage(1) }
+  }
+
+  if (loading && rows.length === 0 && total === 0) return <div className="p-6 text-gray-400">加载中...</div>
 
   return (
     <div className="p-4 lg:p-6 max-w-7xl">
@@ -98,18 +130,17 @@ export default function QuotationsPage() {
         {isAdmin && (
           <div className="flex bg-white border border-gray-200 rounded-lg overflow-hidden">
             <button
-              onClick={() => setScope('mine')}
+              onClick={() => { setScope('mine'); setPage(1) }}
               className={`px-3 py-1.5 text-sm cursor-pointer ${scope === 'mine' ? 'bg-gold-50 text-gold-700' : 'text-gray-500 hover:bg-gray-50'}`}
             >仅我的</button>
             <button
-              onClick={() => setScope('all')}
+              onClick={() => { setScope('all'); setPage(1) }}
               className={`px-3 py-1.5 text-sm cursor-pointer ${scope === 'all' ? 'bg-gold-50 text-gold-700' : 'text-gray-500 hover:bg-gray-50'}`}
             >全部</button>
           </div>
         )}
       </div>
 
-      {/* Filters */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4 grid grid-cols-2 lg:grid-cols-6 gap-3">
         <div className="col-span-2 lg:col-span-2">
           <label className="block text-xs text-gray-500 mb-1">搜索</label>
@@ -118,7 +149,7 @@ export default function QuotationsPage() {
             <input
               type="text"
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onChange={e => { setSearch(e.target.value); setPage(1) }}
               placeholder="报价号 / 客户名 / 公司名..."
               className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gold-500"
             />
@@ -126,7 +157,7 @@ export default function QuotationsPage() {
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">状态</label>
-          <select value={status} onChange={e => setStatus(e.target.value)}
+          <select value={status} onChange={e => { setStatus(e.target.value); setPage(1) }}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gold-500">
             <option value="all">全部</option>
             {QUOTATION_STATUSES.map(s => <option key={s} value={s}>{QUOTATION_STATUS_LABELS[s]}</option>)}
@@ -135,7 +166,7 @@ export default function QuotationsPage() {
         {isAdmin && scope === 'all' && (
           <div>
             <label className="block text-xs text-gray-500 mb-1">业务员</label>
-            <select value={ownerFilter} onChange={e => setOwnerFilter(e.target.value)}
+            <select value={ownerFilter} onChange={e => { setOwnerFilter(e.target.value); setPage(1) }}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gold-500">
               <option value="all">全部</option>
               {members.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
@@ -144,20 +175,22 @@ export default function QuotationsPage() {
         )}
         <div>
           <label className="block text-xs text-gray-500 mb-1">起始日期</label>
-          <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+          <input type="date" value={from} onChange={e => { setFrom(e.target.value); setPage(1) }}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gold-500" />
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">截止日期</label>
-          <input type="date" value={to} onChange={e => setTo(e.target.value)}
+          <input type="date" value={to} onChange={e => { setTo(e.target.value); setPage(1) }}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gold-500" />
         </div>
       </div>
 
-      {/* Summary */}
       <div className="mb-3 text-sm text-gray-500 flex items-center gap-4 flex-wrap">
-        <span>共 <span className="font-medium text-gray-800">{filtered.length}</span> 条</span>
-        {Object.entries(totalsByCurrency).map(([cur, amt]) => (
+        <span>共 <span className="font-medium text-gray-800">{total}</span> 条</span>
+        {Object.keys(pageTotalsByCurrency).length > 0 && (
+          <span className="text-xs text-gray-400">本页:</span>
+        )}
+        {Object.entries(pageTotalsByCurrency).map(([cur, amt]) => (
           <span key={cur}>{cur} <span className="font-medium text-gray-800">{amt.toFixed(2)}</span></span>
         ))}
       </div>
@@ -179,7 +212,7 @@ export default function QuotationsPage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(r => (
+            {rows.map(r => (
               <tr key={r.id} className="border-t border-gray-100 hover:bg-gray-50">
                 <td className="py-2.5 px-4 font-medium text-gray-900">
                   {r.customer ? (
@@ -209,7 +242,7 @@ export default function QuotationsPage() {
                 <td className="py-2.5 px-4 text-gray-500">{r.created_at.split('T')[0]}</td>
               </tr>
             ))}
-            {filtered.length === 0 && (
+            {rows.length === 0 && !loading && (
               <tr><td colSpan={9} className="py-10 text-center text-gray-400">没有符合条件的报价</td></tr>
             )}
           </tbody>
@@ -218,7 +251,7 @@ export default function QuotationsPage() {
 
       {/* Cards (mobile) */}
       <div className="lg:hidden space-y-2">
-        {filtered.map(r => (
+        {rows.map(r => (
           <Link
             key={r.id}
             href={r.customer ? `/customers/${r.customer.id}` : '#'}
@@ -238,10 +271,12 @@ export default function QuotationsPage() {
             </div>
           </Link>
         ))}
-        {filtered.length === 0 && (
+        {rows.length === 0 && !loading && (
           <div className="py-10 text-center text-gray-400 text-sm">没有符合条件的报价</div>
         )}
       </div>
+
+      <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
     </div>
   )
 }

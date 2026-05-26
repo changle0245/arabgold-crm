@@ -1,11 +1,13 @@
 import { test, expect } from '@playwright/test'
 
 // Test configuration
+// Default credentials must match scripts/seed-test-accounts.js (shared password
+// ArabGold2026!, accounts admin@ + sales01-10@arabgold.test). Override via env vars.
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000'
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@arabgold.test'
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123'
-const MEMBER_EMAIL = process.env.MEMBER_EMAIL || 'member@arabgold.test'
-const MEMBER_PASSWORD = process.env.MEMBER_PASSWORD || 'member123'
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'ArabGold2026!'
+const MEMBER_EMAIL = process.env.MEMBER_EMAIL || 'sales01@arabgold.test'
+const MEMBER_PASSWORD = process.env.MEMBER_PASSWORD || 'ArabGold2026!'
 
 test.describe('Phase 3 - P0 & P1 Automated Tests', () => {
 
@@ -21,16 +23,19 @@ test.describe('Phase 3 - P0 & P1 Automated Tests', () => {
     // Wait for dashboard to load
     await page.waitForURL(/\/dashboard|\/customers/, { timeout: 10000 })
 
-    // Check bell icon exists (in sidebar)
-    const bellIcon = page.locator('button:has-text("Bell"), button svg[class*="lucide"]').first()
-    await expect(bellIcon).toBeVisible()
+    // The sidebar renders a bell in the mobile header and one in the desktop
+    // sidebar; at the default desktop viewport only the latter is visible.
+    const bellButton = page.locator('button[aria-label="待办提醒"]:visible')
+    await expect(bellButton).toBeVisible()
 
     // Click bell icon to open dropdown
-    await bellIcon.click()
+    await bellButton.click()
 
-    // Check dropdown appeared
-    const dropdown = page.locator('div:has-text("待办提醒")')
-    await expect(dropdown).toBeVisible()
+    // The dropdown renders as a sibling of the button inside the same wrapper.
+    // Scope to that wrapper so we don't match the boss dashboard's own
+    // "各业务员待办提醒" heading.
+    const dropdownHeading = bellButton.locator('..').getByRole('heading', { name: /待办提醒/ })
+    await expect(dropdownHeading).toBeVisible()
   })
 
   // ====================
@@ -54,7 +59,7 @@ test.describe('Phase 3 - P0 & P1 Automated Tests', () => {
 
     // If there's risk data, the card should be visible
     if (hasRiskSection) {
-      const riskCard = page.locator('div:has-text("集中度风险客户")')
+      const riskCard = page.locator('h3:has-text("集中度风险客户")')
       await expect(riskCard).toBeVisible()
     }
   })
@@ -118,7 +123,7 @@ test.describe('Phase 3 - P0 & P1 Automated Tests', () => {
     await page.waitForLoadState('networkidle')
 
     // Check for funnel section
-    const funnelSection = page.locator('h3:has-text("成交转化率漏斗")')
+    const funnelSection = page.locator('h3:has-text("成交漏斗")')
     await expect(funnelSection).toBeVisible()
 
     // Check for funnel stages
@@ -224,8 +229,9 @@ test.describe('Phase 3 - P0 & P1 Automated Tests', () => {
     await page.goto(`${BASE_URL}/reminders`)
     await page.waitForLoadState('networkidle')
 
-    // Page should load without errors
-    const reminderPage = page.locator('text=我的提醒')
+    // Page should load without errors ('我的提醒' is also a sidebar link, so
+    // target the page heading specifically).
+    const reminderPage = page.locator('h1:has-text("我的提醒")')
     await expect(reminderPage).toBeVisible()
   })
 

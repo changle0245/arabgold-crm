@@ -25,21 +25,22 @@ export async function proxy(request: NextRequest) {
     }
   )
 
-  const { data: { session } } = await supabase.auth.getSession()
+  // H6: getUser() 会向 Auth 服务器复验 JWT;getSession() 只解 cookie 不复验。
+  const { data: { user } } = await supabase.auth.getUser()
 
   const isLoginPage = request.nextUrl.pathname === '/login'
 
-  if (!session?.user && !isLoginPage) {
+  if (!user && !isLoginPage) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
   }
 
-  if (session?.user && isLoginPage) {
+  if (user && isLoginPage) {
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
-      .eq('id', session.user.id)
+      .eq('id', user.id)
       .single()
 
     const url = request.nextUrl.clone()

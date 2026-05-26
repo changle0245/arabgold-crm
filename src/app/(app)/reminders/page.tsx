@@ -4,50 +4,86 @@ import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/auth-provider'
+import { Pagination } from '@/components/pagination'
 import type { Reminder } from '@/lib/types'
 import { REMINDER_TYPES, REMINDER_TYPE_LABELS } from '@/lib/constants'
-import { Bell, Check, X, Clock, Filter } from 'lucide-react'
+import { Bell, Check, X, Clock, Filter, Rewind } from 'lucide-react'
 import { daysFromNow, addDays } from '@/lib/dates'
 
 type StatusFilter = 'pending' | 'completed' | 'all'
 
+const PAGE_SIZE = 30
+
 export default function RemindersPage() {
   const { profile, isAdmin } = useAuth()
   const [reminders, setReminders] = useState<Reminder[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending')
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [scopeFilter, setScopeFilter] = useState<'mine' | 'all'>('mine')
+  // 各状态的全局计数（不受当前 typeFilter / scopeFilter 影响，仅 scopeFilter 影响）
+  const [pendingStats, setPendingStats] = useState<{ overdue: number; today: number; upcoming: number }>({
+    overdue: 0, today: 0, upcoming: 0,
+  })
 
   const load = useCallback(async () => {
     if (!profile?.id) return
+    setLoading(true)
     const supabase = createClient()
+
     let query = supabase
       .from('reminders')
-      .select('*, customer:customers!reminders_customer_id_fkey(id, contact_name, company_name), assignee:profiles!reminders_assigned_to_fkey(*)')
+      .select(
+        '*, customer:customers!reminders_customer_id_fkey(id, contact_name, company_name), assignee:profiles!reminders_assigned_to_fkey(*)',
+        { count: 'exact' }
+      )
       .order('due_date', { ascending: true })
 
-    if (scopeFilter === 'mine') {
-      query = query.eq('assigned_to', profile.id)
-    }
-    if (statusFilter !== 'all') {
-      query = query.eq('status', statusFilter)
-    }
-    if (typeFilter !== 'all') {
-      query = query.eq('type', typeFilter)
-    }
+    if (scopeFilter === 'mine') query = query.eq('assigned_to', profile.id)
+    if (statusFilter !== 'all') query = query.eq('status', statusFilter)
+    if (typeFilter !== 'all') query = query.eq('type', typeFilter)
 
-    const { data } = await query
+    const start = (page - 1) * PAGE_SIZE
+    const { data, count } = await query.range(start, start + PAGE_SIZE - 1)
     setReminders((data as Reminder[]) || [])
+    setTotal(count || 0)
     setLoading(false)
-  }, [profile?.id, statusFilter, typeFilter, scopeFilter])
+  }, [profile?.id, statusFilter, typeFilter, scopeFilter, page])
 
   useEffect(() => { load() }, [load])
+
+  // pending 状态汇总（独立于分页，用于顶部 3 个 stat 卡片）
+  useEffect(() => {
+    if (!profile?.id) return
+    const supabase = createClient()
+    const todayISO = new Date().toISOString().slice(0, 10)
+
+    const base = () => {
+      let q = supabase
+        .from('reminders')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pending')
+      if (scopeFilter === 'mine') q = q.eq('assigned_to', profile.id)
+      return q
+    }
+
+    Promise.all([
+      base().lt('due_date', todayISO),
+      base().eq('due_date', todayISO),
+      base().gt('due_date', todayISO),
+    ]).then(([{ count: a }, { count: b }, { count: c }]) => {
+      setPendingStats({ overdue: a || 0, today: b || 0, upcoming: c || 0 })
+    })
+  }, [profile?.id, scopeFilter, reminders.length])
 
   async function markStatus(id: string, status: string) {
     const supabase = createClient()
     await supabase.from('reminders').update({ status }).eq('id', id)
     load()
+    // 修 #12: 通知 sidebar 立即刷新红圈
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('reminders-changed'))
   }
 
   async function postpone(id: string, days: number) {
@@ -56,13 +92,10 @@ export default function RemindersPage() {
     if (!r?.due_date) return
     await supabase.from('reminders').update({ due_date: addDays(r.due_date, days) }).eq('id', id)
     load()
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('reminders-changed'))
   }
 
-  if (loading) return <div className="p-6 text-gray-400">加载中...</div>
-
-  const overdue = reminders.filter(r => r.status === 'pending' && daysFromNow(r.due_date) < 0)
-  const today = reminders.filter(r => r.status === 'pending' && daysFromNow(r.due_date) === 0)
-  const upcoming = reminders.filter(r => r.status === 'pending' && daysFromNow(r.due_date) > 0)
+  if (loading && reminders.length === 0 && total === 0) return <div className="p-6 text-gray-400">加载中...</div>
 
   return (
     <div className="p-4 lg:p-6 max-w-5xl">
@@ -74,20 +107,29 @@ export default function RemindersPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <Filter size={14} className="text-gray-400" />
           {isAdmin && (
-            <select value={scopeFilter} onChange={e => setScopeFilter(e.target.value as 'mine' | 'all')}
-              className="px-2.5 py-1.5 border border-gray-300 rounded-lg text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-gold-500 cursor-pointer">
+            <select
+              value={scopeFilter}
+              onChange={e => { setScopeFilter(e.target.value as 'mine' | 'all'); setPage(1) }}
+              className="px-2.5 py-1.5 border border-gray-300 rounded-lg text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-gold-500 cursor-pointer"
+            >
               <option value="mine">仅我的</option>
               <option value="all">全员</option>
             </select>
           )}
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as StatusFilter)}
-            className="px-2.5 py-1.5 border border-gray-300 rounded-lg text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-gold-500 cursor-pointer">
+          <select
+            value={statusFilter}
+            onChange={e => { setStatusFilter(e.target.value as StatusFilter); setPage(1) }}
+            className="px-2.5 py-1.5 border border-gray-300 rounded-lg text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-gold-500 cursor-pointer"
+          >
             <option value="pending">待办</option>
             <option value="completed">已完成</option>
             <option value="all">全部</option>
           </select>
-          <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
-            className="px-2.5 py-1.5 border border-gray-300 rounded-lg text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-gold-500 cursor-pointer">
+          <select
+            value={typeFilter}
+            onChange={e => { setTypeFilter(e.target.value); setPage(1) }}
+            className="px-2.5 py-1.5 border border-gray-300 rounded-lg text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-gold-500 cursor-pointer"
+          >
             <option value="all">全部类型</option>
             {REMINDER_TYPES.map(t => <option key={t} value={t}>{REMINDER_TYPE_LABELS[t]}</option>)}
           </select>
@@ -96,13 +138,13 @@ export default function RemindersPage() {
 
       {statusFilter === 'pending' && (
         <div className="grid grid-cols-3 gap-3 mb-4">
-          <StatCard label="逾期" value={overdue.length} color="text-red-500" />
-          <StatCard label="今天" value={today.length} color="text-amber-500" />
-          <StatCard label="未来" value={upcoming.length} color="text-gray-700" />
+          <StatCard label="逾期" value={pendingStats.overdue} color="text-red-500" />
+          <StatCard label="今天" value={pendingStats.today} color="text-amber-500" />
+          <StatCard label="未来" value={pendingStats.upcoming} color="text-gray-700" />
         </div>
       )}
 
-      {reminders.length === 0 ? (
+      {reminders.length === 0 && !loading ? (
         <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-sm text-gray-400">
           没有匹配的提醒
         </div>
@@ -143,6 +185,10 @@ export default function RemindersPage() {
                 </div>
                 {r.status === 'pending' && r.assigned_to === profile?.id && (
                   <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => postpone(r.id, -1)} title="提前1天"
+                      className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded cursor-pointer">
+                      <Rewind size={14} />
+                    </button>
                     <button onClick={() => postpone(r.id, 1)} title="推迟1天"
                       className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded cursor-pointer">
                       <Clock size={14} />
@@ -162,6 +208,8 @@ export default function RemindersPage() {
           })}
         </div>
       )}
+
+      <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
     </div>
   )
 }

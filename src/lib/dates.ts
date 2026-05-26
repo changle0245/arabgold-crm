@@ -28,17 +28,6 @@ export function todayLocalISO(): string {
 }
 
 /**
- * Parse a `YYYY-MM-DD` string into a Date at the browser's local midnight.
- * Intended for display / day-of-week extraction; for date arithmetic use
- * `daysSince` / `daysFromNow` (those don't depend on the browser TZ).
- * Assumes the user's browser is in Asia/Shanghai (our team is in 广州).
- */
-export function parseLocalDate(s: string): Date {
-  const [y, m, d] = s.split('-').map(Number)
-  return new Date(y, m - 1, d)
-}
-
-/**
  * Whole days from `dateStr` (interpreted as a CN local date) to today (CN local).
  * Past dates return positive, future dates return negative.
  * Null returns 9999 — callers treat "never recorded" as overdue forever

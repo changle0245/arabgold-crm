@@ -233,7 +233,7 @@ export function SamplePanel({ customerId, samples, canEdit, onRefresh }: Props) 
                       type="button"
                       onClick={() => deleteSample(s)}
                       className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"
-                      title="删除"
+                      title="删除此寄样记录。规则：可直接删除，不影响其他数据"
                     >
                       <Trash2 size={13} />
                     </button>

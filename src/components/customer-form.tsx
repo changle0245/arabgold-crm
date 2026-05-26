@@ -56,7 +56,7 @@ export function CustomerForm({ customer }: Props) {
   const [aiFilled, setAiFilled] = useState<Set<string>>(new Set())
   const [avatarUrl, setAvatarUrl] = useState<string | null>(customer?.avatar_url || null)
   const [cropperImage, setCropperImage] = useState<string | null>(null)
-  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const [pendingAvatarBlob, setPendingAvatarBlob] = useState<Blob | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [tags, setTags] = useState<string[]>([])
   const avatarInputRef = useRef<HTMLInputElement>(null)
@@ -88,26 +88,17 @@ export function CustomerForm({ customer }: Props) {
     setCropperImage(URL.createObjectURL(file))
   }
 
-  async function handleCropped(blob: Blob) {
+  function handleCropped(blob: Blob) {
     setCropperImage(null)
-    setUploadingAvatar(true)
-    try {
-      const supabase = createClient()
-      const path = `avatars/${profile!.id}/${Date.now()}.jpg`
-      const { error } = await supabase.storage
-        .from('customer-attachments')
-        .upload(path, blob, { contentType: 'image/jpeg', upsert: false })
-      if (error) throw error
-      const { data } = supabase.storage.from('customer-attachments').getPublicUrl(path)
-      setAvatarUrl(data.publicUrl)
-    } catch (e: any) {
-      alert('头像上传失败: ' + e.message)
-    } finally {
-      setUploadingAvatar(false)
-    }
+    // L7: 不在裁剪时上传 —— 仅暂存 blob + 本地预览,提交时才真正上传到存储桶。
+    setPendingAvatarBlob(blob)
+    setAvatarUrl(URL.createObjectURL(blob))
   }
 
-  function removeAvatar() { setAvatarUrl(null) }
+  function removeAvatar() {
+    setPendingAvatarBlob(null)
+    setAvatarUrl(null)
+  }
 
   useEffect(() => {
     if (!form.owner_id && profile?.id) {
@@ -167,8 +158,27 @@ export function CustomerForm({ customer }: Props) {
     setSaving(true)
     const supabase = createClient()
 
+    // L7: 头像在提交时才上传(裁剪时只暂存 blob)。放弃表单不会留下存储孤儿;
+    // 保存失败会删掉本次刚传的文件;替换/移除头像成功后会删掉旧文件。
+    const avatarStoragePath = (url: string | null | undefined): string | null => {
+      const marker = '/customer-attachments/'
+      const i = url ? url.indexOf(marker) : -1
+      return i >= 0 ? url!.slice(i + marker.length) : null
+    }
+    let finalAvatarUrl = avatarUrl
+    let newAvatarPath: string | null = null
+    if (pendingAvatarBlob) {
+      const path = `avatars/${profile!.id}/${Date.now()}.jpg`
+      const { error: upErr } = await supabase.storage
+        .from('customer-attachments')
+        .upload(path, pendingAvatarBlob, { contentType: 'image/jpeg', upsert: false })
+      if (upErr) { alert('头像上传失败: ' + upErr.message); setSaving(false); return }
+      newAvatarPath = path
+      finalAvatarUrl = supabase.storage.from('customer-attachments').getPublicUrl(path).data.publicUrl
+    }
+
     // 把所有空字符串转为 null（数据库友好）
-    const payload: any = { avatar_url: avatarUrl }
+    const payload: any = { avatar_url: finalAvatarUrl }
     for (const key of Object.keys(form)) {
       const v = (form as any)[key]
       if (typeof v === 'string') {
@@ -194,15 +204,28 @@ export function CustomerForm({ customer }: Props) {
     }
 
     if (isEdit) {
-      const oldStage = customer!.stage
+      const oldOwnerId = customer!.owner_id
       const { error } = await supabase.from('customers').update(payload).eq('id', customer!.id)
-      if (error) { alert('保存失败: ' + error.message); setSaving(false); return }
-      if (payload.stage !== oldStage) {
-        await supabase.from('stage_changes').insert({
-          customer_id: customer!.id, changed_by: profile!.id, from_stage: oldStage, to_stage: payload.stage,
-        })
+      if (error) {
+        if (newAvatarPath) await supabase.storage.from('customer-attachments').remove([newAvatarPath])
+        alert('保存失败: ' + error.message); setSaving(false); return
       }
-      await syncTags(customer!.id)
+      // stage_changes 由 trg_record_stage_change 触发器自动写入。
+      // ⑰ 修:update 成功后,3 个 side-effect 互不依赖,并行执行(原本 ~4s 串行 → 单次往返)
+      const sideEffects: PromiseLike<unknown>[] = [syncTags(customer!.id)]
+      if (payload.owner_id !== oldOwnerId) {
+        sideEffects.push(
+          supabase.from('customer_ownership_changes').insert({
+            customer_id: customer!.id, changed_by: profile!.id, from_owner: oldOwnerId, to_owner: payload.owner_id,
+          })
+        )
+      }
+      // L7: 头像被替换或移除 → 删掉旧文件,避免存储孤儿
+      const oldPath = avatarStoragePath(customer!.avatar_url)
+      if (oldPath && customer!.avatar_url !== finalAvatarUrl) {
+        sideEffects.push(supabase.storage.from('customer-attachments').remove([oldPath]))
+      }
+      await Promise.all(sideEffects)
       router.push(`/customers/${customer!.id}`)
     } else {
       const insertData = {
@@ -211,12 +234,11 @@ export function CustomerForm({ customer }: Props) {
         last_contact_date: todayLocalISO(),
       }
       const { data, error } = await supabase.from('customers').insert(insertData).select('id').single()
-      if (error) { alert('保存失败: ' + error.message); setSaving(false); return }
-      if (payload.stage !== '待定') {
-        await supabase.from('stage_changes').insert({
-          customer_id: data.id, changed_by: profile!.id, from_stage: null, to_stage: payload.stage,
-        })
+      if (error) {
+        if (newAvatarPath) await supabase.storage.from('customer-attachments').remove([newAvatarPath])
+        alert('保存失败: ' + error.message); setSaving(false); return
       }
+      // stage_changes 由 trg_record_stage_change 触发器自动写入。
       await syncTags(data.id)
       router.push(`/customers/${data.id}`)
     }
@@ -296,7 +318,7 @@ export function CustomerForm({ customer }: Props) {
       >
         <div className="flex items-center gap-4">
           <button type="button" onClick={() => avatarInputRef.current?.click()}
-            disabled={uploadingAvatar}
+            disabled={saving}
             className="shrink-0 relative group cursor-pointer disabled:cursor-not-allowed" title="点击或拖入图片">
             <CustomerAvatar url={avatarUrl} name={form.contact_name} size={72} />
             <div className="absolute inset-0 rounded-full bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
@@ -309,7 +331,7 @@ export function CustomerForm({ customer }: Props) {
               {dragOver ? '松开鼠标即可上传' : '点击头像、拖拽图片到此处，或用下方按钮 — 都会进入裁剪'}
             </p>
             <div className="flex gap-2 flex-wrap">
-              <button type="button" onClick={() => avatarInputRef.current?.click()} disabled={uploadingAvatar}
+              <button type="button" onClick={() => avatarInputRef.current?.click()} disabled={saving}
                 className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 cursor-pointer">
                 <Upload size={14} />
                 {avatarUrl ? '更换头像' : '选择图片'}
@@ -323,7 +345,6 @@ export function CustomerForm({ customer }: Props) {
               <input ref={avatarInputRef} type="file" accept="image/*" className="hidden"
                 onChange={e => { const f = e.target.files?.[0]; if (f) handleAvatarFile(f); e.target.value = '' }} />
             </div>
-            {uploadingAvatar && <p className="text-xs text-gold-600 mt-1.5">头像上传中...</p>}
           </div>
         </div>
       </div>
