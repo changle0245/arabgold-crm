@@ -32,8 +32,8 @@ type Row = Record<string, unknown>
 type FilterOp = '=' | '<>' | '<' | '<=' | '>' | '>=' | 'ILIKE' | 'LIKE' | 'IS'
 
 type Filter =
-  | { kind: 'cmp'; col: string; op: FilterOp; val: unknown }
-  | { kind: 'in'; col: string; vals: unknown[] }
+  | { kind: 'cmp'; col: string; op: FilterOp; val: unknown; negate?: boolean }
+  | { kind: 'in'; col: string; vals: unknown[]; negate?: boolean }
   | { kind: 'or'; sql: string }
   | { kind: 'rawAnd'; sql: string }
 
@@ -216,6 +216,26 @@ class SbQuery<T = Row> implements PromiseLike<SbResult<T>> {
     this._filters.push({ kind: 'or', sql: expr })
     return this
   }
+  // PostgREST .not(col, op, val) → NOT (<col> <op> <val>)
+  // Common shape: .not(col, 'is', null) → col IS NOT NULL
+  not(col: string, op: string, val: unknown): SbQuery<T> {
+    if (op === 'in') {
+      const vals = Array.isArray(val) ? val : []
+      this._filters.push({ kind: 'in', col, vals, negate: true })
+      return this
+    }
+    const opMap: Record<string, FilterOp> = {
+      eq: '=', neq: '<>', lt: '<', lte: '<=', gt: '>', gte: '>=',
+      ilike: 'ILIKE', like: 'LIKE', is: 'IS',
+    }
+    const sqlOp = opMap[op]
+    if (!sqlOp) {
+      throw new Error('Unsupported .not() op: ' + op)
+    }
+    const filterVal = op === 'is' && (val === null || val === 'null') ? null : val
+    this._filters.push({ kind: 'cmp', col, op: sqlOp, val: filterVal, negate: true })
+    return this
+  }
   order(col: string, opts?: { ascending?: boolean; nullsFirst?: boolean }): SbQuery<T> {
     this._orderBy.push({ col, asc: opts?.ascending ?? true, nullsFirst: opts?.nullsFirst })
     return this
@@ -238,16 +258,19 @@ class SbQuery<T = Row> implements PromiseLike<SbResult<T>> {
 
     for (const f of this._filters) {
       if (f.kind === 'cmp') {
+        let cond: string
         if (f.op === 'IS' && f.val === null) {
-          conditions.push(`${quoteIdent(f.col)} IS NULL`)
+          cond = `${quoteIdent(f.col)} IS NULL`
         } else {
           params.push(f.val)
           nextParam++
-          conditions.push(`${quoteIdent(f.col)} ${f.op} $${nextParam - 1}`)
+          cond = `${quoteIdent(f.col)} ${f.op} $${nextParam - 1}`
         }
+        conditions.push(f.negate ? `NOT (${cond})` : cond)
       } else if (f.kind === 'in') {
         if (f.vals.length === 0) {
-          conditions.push('FALSE')
+          // empty IN — vacuously false; empty NOT IN — vacuously true
+          conditions.push(f.negate ? 'TRUE' : 'FALSE')
           continue
         }
         const placeholders = f.vals.map(v => {
@@ -255,7 +278,8 @@ class SbQuery<T = Row> implements PromiseLike<SbResult<T>> {
           nextParam++
           return `$${nextParam - 1}`
         })
-        conditions.push(`${quoteIdent(f.col)} IN (${placeholders.join(', ')})`)
+        const inExpr = `${quoteIdent(f.col)} IN (${placeholders.join(', ')})`
+        conditions.push(f.negate ? `NOT (${inExpr})` : inExpr)
       } else if (f.kind === 'or') {
         const out = parsePostgrestFilter(f.sql, nextParam, params)
         conditions.push(out.sql)

@@ -1,21 +1,46 @@
-// Phase 4: R2 storage — reuses the ArabGold Worker proxy
-// (mute-hat-decearabgold-r2-proxy). All CRM objects live under the
-// `crm-arabgold/` prefix to keep blast radius separate from arabgold main.
+// Phase 4: R2 storage via Cloudflare R2 S3-compatible API.
+// All CRM objects live under the `crm-arabgold/` prefix to keep blast radius
+// separate from any future bucket sharing.
 //
-// Worker endpoints:
-//   POST   /upload   formData(file, path)     — no auth, fire-and-forget
-//   DELETE /delete   {keys: string[]}         — X-Admin-Token
-//   GET    /list     ?prefix=&cursor=&limit=  — X-Admin-Token
+// Required env (set in .env.local + Vercel prod env):
+//   R2_ACCOUNT_ID         — Cloudflare Account ID (from R2 dashboard)
+//   R2_ACCESS_KEY_ID      — S3 access key id (R2 API Token output)
+//   R2_SECRET_ACCESS_KEY  — S3 secret access key (R2 API Token output)
+//   R2_BUCKET             — bucket name (e.g. arabgold-crm-attachments)
+//   R2_PUBLIC_URL         — r2.dev public URL (e.g. https://pub-xxx.r2.dev)
 //
-// Public read: `${R2_PUBLIC_URL}/${key}` (bucket is public; URL paths
-// embed customerId + timestamp + random, never expose without auth).
+// Public read: `${R2_PUBLIC_URL}/${key}` (bucket public-dev enabled; URL
+// paths embed customerId + timestamp + random — obscurity is the access
+// control, callers must not log raw URLs to untrusted sinks).
+
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectsCommand,
+} from '@aws-sdk/client-s3'
 
 const KEY_PREFIX = 'crm-arabgold/'
 
-function workerUrl(): string {
-  const u = process.env.R2_WORKER_URL
-  if (!u) throw new Error('R2_WORKER_URL not configured')
-  return u.replace(/\/upload$/, '').replace(/\/$/, '')
+let _client: S3Client | null = null
+
+function client(): S3Client {
+  if (_client) return _client
+  const accountId = process.env.R2_ACCOUNT_ID
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY
+  if (!accountId || !accessKeyId || !secretAccessKey) {
+    throw new Error('R2 credentials not configured (R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY)')
+  }
+  _client = new S3Client({
+    region: 'auto',
+    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+    credentials: { accessKeyId, secretAccessKey },
+  })
+  return _client
+}
+
+function bucketName(): string {
+  return process.env.R2_BUCKET ?? 'arabgold-crm-attachments'
 }
 
 function publicUrl(): string {
@@ -24,14 +49,13 @@ function publicUrl(): string {
   return u.replace(/\/$/, '')
 }
 
-function adminToken(): string {
-  const t = process.env.R2_ADMIN_TOKEN
-  if (!t) throw new Error('R2_ADMIN_TOKEN not configured')
-  return t
-}
-
 export function isR2Configured(): boolean {
-  return !!process.env.R2_WORKER_URL && !!process.env.R2_PUBLIC_URL
+  return (
+    !!process.env.R2_ACCOUNT_ID &&
+    !!process.env.R2_ACCESS_KEY_ID &&
+    !!process.env.R2_SECRET_ACCESS_KEY &&
+    !!process.env.R2_PUBLIC_URL
+  )
 }
 
 function toKey(bucketOrPath: string, path?: string): string {
@@ -58,23 +82,22 @@ export async function uploadObject(
   opts?: { contentType?: string }
 ): Promise<UploadResult> {
   const key = toKey(bucket, path)
-  const form = new FormData()
-  const blob =
-    body instanceof Blob
-      ? body
-      : new Blob([body as unknown as BlobPart], {
-          type: opts?.contentType ?? 'application/octet-stream',
-        })
-  form.append('file', blob, key.split('/').pop() || 'file')
-  form.append('path', key)
-  const res = await fetch(`${workerUrl()}/upload`, {
-    method: 'POST',
-    body: form,
-  })
-  if (!res.ok) {
-    const t = await res.text().catch(() => '')
-    throw new Error(`R2 upload failed: ${res.status} ${t.slice(0, 200)}`)
+  let bodyBuf: Buffer
+  if (body instanceof Blob) {
+    bodyBuf = Buffer.from(await body.arrayBuffer())
+  } else if (body instanceof ArrayBuffer) {
+    bodyBuf = Buffer.from(body)
+  } else {
+    bodyBuf = body
   }
+  await client().send(
+    new PutObjectCommand({
+      Bucket: bucketName(),
+      Key: key,
+      Body: bodyBuf,
+      ContentType: opts?.contentType ?? 'application/octet-stream',
+    })
+  )
   return {
     key,
     path,
@@ -85,18 +108,12 @@ export async function uploadObject(
 export async function deleteObjects(keys: string[]): Promise<void> {
   const normalized = keys
     .filter((k): k is string => !!k && typeof k === 'string')
-    .map(k => toKey(k))
+    .map((k) => toKey(k))
   if (normalized.length === 0) return
-  const res = await fetch(`${workerUrl()}/delete`, {
-    method: 'DELETE',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Admin-Token': adminToken(),
-    },
-    body: JSON.stringify({ keys: normalized }),
-  })
-  if (!res.ok) {
-    const t = await res.text().catch(() => '')
-    throw new Error(`R2 delete failed: ${res.status} ${t.slice(0, 200)}`)
-  }
+  await client().send(
+    new DeleteObjectsCommand({
+      Bucket: bucketName(),
+      Delete: { Objects: normalized.map((Key) => ({ Key })) },
+    })
+  )
 }
