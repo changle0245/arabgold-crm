@@ -69,6 +69,9 @@ export default function CustomerDetailPage() {
   const [dealPrefill, setDealPrefill] = useState<Quotation | null>(null)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  // ⑭ 删除附件确认 modal（替代 window.confirm，统一设计语言）
+  const [pendingDeleteAttachment, setPendingDeleteAttachment] = useState<CustomerAttachment | null>(null)
+  const [deletingAttachment, setDeletingAttachment] = useState(false)
   const [showImportChat, setShowImportChat] = useState(false)
   const [showRecordEmail, setShowRecordEmail] = useState(false)
   const [editingTranslation, setEditingTranslation] = useState<{ logId: string; original: string | null; translated: string | null } | null>(null)
@@ -240,10 +243,13 @@ export default function CustomerDetailPage() {
     loadData()
   }
 
-  async function handleDeleteAttachment(attId: string) {
-    if (!confirm('确定删除此附件？')) return
+  async function confirmDeleteAttachment() {
+    if (!pendingDeleteAttachment) return
+    setDeletingAttachment(true)
     const supabase = createClient()
-    await supabase.from('customer_attachments').delete().eq('id', attId)
+    await supabase.from('customer_attachments').delete().eq('id', pendingDeleteAttachment.id)
+    setDeletingAttachment(false)
+    setPendingDeleteAttachment(null)
     loadData()
   }
 
@@ -465,6 +471,17 @@ export default function CustomerDetailPage() {
       )}
 
       <ConfirmModal
+        open={!!pendingDeleteAttachment}
+        onClose={() => setPendingDeleteAttachment(null)}
+        onConfirm={confirmDeleteAttachment}
+        title={pendingDeleteAttachment ? `删除附件"${pendingDeleteAttachment.file_name}"？` : ''}
+        description={<p className="text-red-600 font-medium">此操作不可撤销。</p>}
+        dangerLevel="medium"
+        confirmLabel="删除"
+        loading={deletingAttachment}
+      />
+
+      <ConfirmModal
         open={showDeleteModal}
         onClose={() => setShowDeleteModal(false)}
         onConfirm={doDeleteCustomer}
@@ -626,7 +643,7 @@ export default function CustomerDetailPage() {
                     <span className="text-xs text-gray-400">{att.uploader?.full_name}</span>
                     {(isAdmin || att.uploaded_by === profile?.id) && (
                       <button
-                        onClick={() => handleDeleteAttachment(att.id)}
+                        onClick={() => setPendingDeleteAttachment(att)}
                         className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
                       >
                         <Trash2 size={14} />

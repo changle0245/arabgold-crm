@@ -9,6 +9,7 @@ import {
 } from '@/lib/constants'
 import { Plus, PackageCheck, Pencil, Trash2 } from 'lucide-react'
 import { todayLocalISO } from '@/lib/dates'
+import { ConfirmModal } from './confirm-modal'
 
 interface Props {
   customerId: string
@@ -33,6 +34,10 @@ export function SamplePanel({ customerId, samples, canEdit, onRefresh }: Props) 
   // feedback form
   const [feedbackId, setFeedbackId] = useState<string | null>(null)
   const [feedbackText, setFeedbackText] = useState('')
+
+  // ⑭ 删除确认 modal（替代 window.confirm，统一系统设计语言）
+  const [pendingDelete, setPendingDelete] = useState<Sample | null>(null)
+  const [deletingNow, setDeletingNow] = useState(false)
 
   function resetForm() {
     setSampleDesc('')
@@ -122,14 +127,21 @@ export function SamplePanel({ customerId, samples, canEdit, onRefresh }: Props) 
     onRefresh()
   }
 
-  async function deleteSample(s: Sample) {
-    if (!confirm(`确定删除寄样记录"${s.sample_desc}"？此操作不可恢复。`)) return
+  function requestDeleteSample(s: Sample) {
+    setPendingDelete(s)
+  }
+
+  async function confirmDeleteSample() {
+    if (!pendingDelete) return
+    setDeletingNow(true)
     const supabase = createClient()
-    const { error } = await supabase.from('samples').delete().eq('id', s.id)
+    const { error } = await supabase.from('samples').delete().eq('id', pendingDelete.id)
+    setDeletingNow(false)
     if (error) {
       alert('删除失败: ' + error.message)
       return
     }
+    setPendingDelete(null)
     onRefresh()
   }
 
@@ -208,6 +220,17 @@ export function SamplePanel({ customerId, samples, canEdit, onRefresh }: Props) 
         </form>
       )}
 
+      <ConfirmModal
+        open={!!pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={confirmDeleteSample}
+        title={pendingDelete ? `删除寄样记录"${pendingDelete.sample_desc}"？` : ''}
+        description={<p className="text-red-600 font-medium">此操作不可撤销。</p>}
+        dangerLevel="medium"
+        confirmLabel="删除"
+        loading={deletingNow}
+      />
+
       {samples.length === 0 ? (
         <p className="text-sm text-gray-400">暂无寄样记录</p>
       ) : (
@@ -231,7 +254,7 @@ export function SamplePanel({ customerId, samples, canEdit, onRefresh }: Props) 
                     </button>
                     <button
                       type="button"
-                      onClick={() => deleteSample(s)}
+                      onClick={() => requestDeleteSample(s)}
                       className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"
                       title="删除此寄样记录。规则：可直接删除，不影响其他数据"
                     >

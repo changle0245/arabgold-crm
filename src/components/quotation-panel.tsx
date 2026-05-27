@@ -8,6 +8,7 @@ import {
   QUOTATION_STATUS_LABELS, QUOTATION_STATUSES, CURRENCIES, INCOTERMS, PRODUCT_CATEGORIES,
 } from '@/lib/constants'
 import { Plus, ChevronDown, ChevronRight, Copy, Trash2, Pencil, Package, Printer } from 'lucide-react'
+import { ConfirmModal } from './confirm-modal'
 
 interface Props {
   customerId: string
@@ -41,6 +42,10 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
   // for edit mode (mutually exclusive with new-version mode)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingVersion, setEditingVersion] = useState<number>(0)
+
+  // ⑭ 删除确认 modal（替代 window.confirm，统一系统设计语言）
+  const [pendingDelete, setPendingDelete] = useState<Quotation | null>(null)
+  const [deletingNow, setDeletingNow] = useState(false)
 
   function resetForm() {
     setCurrency('USD')
@@ -220,9 +225,9 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
     onRefresh()
   }
 
-  async function deleteQuotation(q: Quotation) {
+  async function requestDeleteQuotation(q: Quotation) {
     const supabase = createClient()
-    // Block deleting a version that has child versions
+    // Block deleting a version that has child versions（弹窗前先校验）
     const { data: children } = await supabase
       .from('quotations')
       .select('id, version')
@@ -231,13 +236,20 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
       alert(`该报价有 ${children.length} 个新版本，请先删除新版本再删除此版本。`)
       return
     }
-    if (!confirm(`确定删除报价 ${q.quote_no} V${q.version}？此操作不可恢复。`)) return
+    setPendingDelete(q)
+  }
 
-    const { error } = await supabase.from('quotations').delete().eq('id', q.id)
+  async function confirmDeleteQuotation() {
+    if (!pendingDelete) return
+    setDeletingNow(true)
+    const supabase = createClient()
+    const { error } = await supabase.from('quotations').delete().eq('id', pendingDelete.id)
+    setDeletingNow(false)
     if (error) {
       alert('删除失败: ' + error.message)
       return
     }
+    setPendingDelete(null)
     onRefresh()
   }
 
@@ -388,6 +400,22 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
         </form>
       )}
 
+      <ConfirmModal
+        open={!!pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={confirmDeleteQuotation}
+        title={pendingDelete ? `删除报价 ${pendingDelete.quote_no} V${pendingDelete.version}？` : ''}
+        description={
+          <>
+            <p>此报价版本将被永久删除。</p>
+            <p className="text-amber-600">规则：若此版本有子版本（新版本），需先删除子版本。</p>
+          </>
+        }
+        dangerLevel="medium"
+        confirmLabel="删除"
+        loading={deletingNow}
+      />
+
       {/* Quotation list */}
       {quotations.length === 0 ? (
         <p className="text-sm text-gray-400">暂无报价记录</p>
@@ -449,7 +477,7 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
                         quotation={v}
                         canEdit={canEdit}
                         onEdit={() => startEdit(v)}
-                        onDelete={() => deleteQuotation(v)}
+                        onDelete={() => requestDeleteQuotation(v)}
                         onStatusChange={status => updateStatus(v.id, status)}
                       />
                     ))}

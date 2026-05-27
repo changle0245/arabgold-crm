@@ -9,6 +9,7 @@ import {
 } from '@/lib/constants'
 import { Plus, Package, Check, Pencil, Trash2, ChevronDown, ChevronRight } from 'lucide-react'
 import { todayLocalISO } from '@/lib/dates'
+import { ConfirmModal } from './confirm-modal'
 
 interface Props {
   customerId: string
@@ -30,6 +31,9 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  // ⑭ 删除确认 modal（替代 window.confirm，统一系统设计语言）
+  const [pendingDelete, setPendingDelete] = useState<Deal | null>(null)
+  const [deletingNow, setDeletingNow] = useState(false)
 
   const [dealDate, setDealDate] = useState(todayLocalISO())
   const [dealAmount, setDealAmount] = useState('')
@@ -235,14 +239,21 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
     onRefresh()
   }
 
-  async function deleteDeal(d: Deal) {
-    if (!confirm(`确定删除成交记录 ${d.deal_no}（${d.currency} ${d.deal_amount?.toFixed(2)}）？\n此操作不可恢复，客户累计成交数据会同步更新。`)) return
+  function requestDeleteDeal(d: Deal) {
+    setPendingDelete(d)
+  }
+
+  async function confirmDeleteDeal() {
+    if (!pendingDelete) return
+    setDeletingNow(true)
     const supabase = createClient()
-    const { error } = await supabase.from('deals').delete().eq('id', d.id)
+    const { error } = await supabase.from('deals').delete().eq('id', pendingDelete.id)
+    setDeletingNow(false)
     if (error) {
       alert('删除失败: ' + error.message)
       return
     }
+    setPendingDelete(null)
     onRefresh()
   }
 
@@ -434,6 +445,25 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
         </form>
       )}
 
+      <ConfirmModal
+        open={!!pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={confirmDeleteDeal}
+        title={pendingDelete ? `删除成交记录 ${pendingDelete.deal_no}？` : ''}
+        description={
+          pendingDelete ? (
+            <>
+              <p>金额: <span className="font-medium text-gray-900">{pendingDelete.currency} {pendingDelete.deal_amount?.toFixed(2)}</span></p>
+              <p>客户累计成交数据会同步重算。</p>
+              <p className="text-red-600 font-medium">此操作不可撤销。</p>
+            </>
+          ) : null
+        }
+        dangerLevel="medium"
+        confirmLabel="删除"
+        loading={deletingNow}
+      />
+
       {deals.length === 0 ? (
         <p className="text-sm text-gray-400">暂无成交记录</p>
       ) : (
@@ -468,7 +498,7 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
                         </button>
                         <button
                           type="button"
-                          onClick={() => deleteDeal(d)}
+                          onClick={() => requestDeleteDeal(d)}
                           className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"
                           title="删除此成交单。规则：客户累计成交额/次数会自动重算"
                         >
