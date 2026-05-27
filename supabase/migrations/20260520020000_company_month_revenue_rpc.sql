@@ -34,7 +34,12 @@ as $$
     ));
 $$;
 
-grant execute on function public.get_company_month_revenue(date) to authenticated;
 
 comment on function public.get_company_month_revenue(date) is
   'Company-wide sum of deal_amount for deals on/after p_month_start in the configured main currency. SECURITY DEFINER so a member can read the company total (deals RLS would otherwise scope it to their own).';
+
+-- ----------------------------------------------------------
+-- Phase 3a Neon port: Supabase-specific SQL stripped above
+-- (RLS policies / grants / storage / pg_cron). See top of
+-- 20260514091040_initial_schema.sql for the auth.uid() stub.
+-- ----------------------------------------------------------

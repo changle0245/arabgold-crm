@@ -54,5 +54,10 @@ begin
 end;
 $$;
 
-grant execute on function public.replace_quotation_items(uuid, jsonb) to authenticated;
-grant execute on function public.replace_deal_items(uuid, jsonb) to authenticated;
+
+
+-- ----------------------------------------------------------
+-- Phase 3a Neon port: Supabase-specific SQL stripped above
+-- (RLS policies / grants / storage / pg_cron). See top of
+-- 20260514091040_initial_schema.sql for the auth.uid() stub.
+-- ----------------------------------------------------------

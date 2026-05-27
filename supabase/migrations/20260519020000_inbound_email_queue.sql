@@ -39,37 +39,28 @@ create index if not exists idx_inbound_queue_status on public.inbound_email_queu
 create index if not exists idx_inbound_queue_member on public.inbound_email_queue(recipient_member);
 create index if not exists idx_inbound_queue_from on public.inbound_email_queue(from_email);
 
-alter table public.inbound_email_queue enable row level security;
 
 -- SELECT：admin 看全部；业务员只看分给自己的（recipient_member = uid）
-drop policy if exists "inbound_queue_select" on public.inbound_email_queue;
-create policy "inbound_queue_select" on public.inbound_email_queue
-  for select to authenticated
-  using (
-    public.current_user_is_active()
-    and (public.current_user_is_admin() or recipient_member = auth.uid())
-  );
+
+
 
 -- INSERT：只有 service role（webhook）写，业务员不直接写
-drop policy if exists "inbound_queue_insert" on public.inbound_email_queue;
-create policy "inbound_queue_insert" on public.inbound_email_queue
-  for insert to authenticated
-  with check (false);
+
+
 
 -- UPDATE：admin 或 recipient_member 可以归并/丢弃
-drop policy if exists "inbound_queue_update" on public.inbound_email_queue;
-create policy "inbound_queue_update" on public.inbound_email_queue
-  for update to authenticated
-  using (
-    public.current_user_is_active()
-    and (public.current_user_is_admin() or recipient_member = auth.uid())
-  );
+
+
 
 -- DELETE：admin only
-drop policy if exists "inbound_queue_delete" on public.inbound_email_queue;
-create policy "inbound_queue_delete" on public.inbound_email_queue
-  for delete to authenticated
-  using (public.current_user_is_admin());
+
+
 
 comment on table public.inbound_email_queue is
   'Inbound emails that could not be auto-matched to a customer by from-email. Members handle them at /inbound-queue: merge to existing customer, create new customer, or discard.';
+
+-- ----------------------------------------------------------
+-- Phase 3a Neon port: Supabase-specific SQL stripped above
+-- (RLS policies / grants / storage / pg_cron). See top of
+-- 20260514091040_initial_schema.sql for the auth.uid() stub.
+-- ----------------------------------------------------------

@@ -31,55 +31,35 @@ create index if not exists idx_comm_logs_channel on public.communication_logs(ch
 create index if not exists idx_comm_logs_customer_sent on public.communication_logs(customer_id, sent_at desc);
 
 -- RLS
-alter table public.communication_logs enable row level security;
+
 
 -- SELECT: admin 或客户 owner 可见
-drop policy if exists "comm_logs_select" on public.communication_logs;
-create policy "comm_logs_select" on public.communication_logs
-  for select to authenticated
-  using (
-    public.current_user_is_active()
-    and (
-      public.current_user_is_admin()
-      or customer_id in (select id from public.customers where owner_id = auth.uid())
-    )
-  );
+
+
 
 -- INSERT: 同上
-drop policy if exists "comm_logs_insert" on public.communication_logs;
-create policy "comm_logs_insert" on public.communication_logs
-  for insert to authenticated
-  with check (
-    public.current_user_is_active()
-    and (
-      public.current_user_is_admin()
-      or customer_id in (select id from public.customers where owner_id = auth.uid())
-    )
-  );
+
+
 
 -- UPDATE: 同上（用于业务员修订译文）
-drop policy if exists "comm_logs_update" on public.communication_logs;
-create policy "comm_logs_update" on public.communication_logs
-  for update to authenticated
-  using (
-    public.current_user_is_active()
-    and (
-      public.current_user_is_admin()
-      or customer_id in (select id from public.customers where owner_id = auth.uid())
-    )
-  );
+
+
 
 -- DELETE: admin only（业务员不能删历史沟通记录）
-drop policy if exists "comm_logs_delete" on public.communication_logs;
-create policy "comm_logs_delete" on public.communication_logs
-  for delete to authenticated
-  using (public.current_user_is_admin());
+
+
 
 comment on table public.communication_logs is
   'Unified communication log: WhatsApp/WeChat chat imports + manually-entered emails + (later) inbound emails. Supports automatic AI translation with optional human revision.';
 
 -- ── Storage bucket ──
 -- 存原始 .txt / .eml / 邮件附件等
-insert into storage.buckets (id, name, public)
-values ('communication-files', 'communication-files', true)
-on conflict (id) do nothing;
+-- [Phase 3a Neon port — Supabase Storage — Phase 4 R2 replacement] insert into storage.buckets (id, name, public)
+-- values ('communication-files', 'communication-files', true)
+-- on conflict (id) do nothing;
+
+-- ----------------------------------------------------------
+-- Phase 3a Neon port: Supabase-specific SQL stripped above
+-- (RLS policies / grants / storage / pg_cron). See top of
+-- 20260514091040_initial_schema.sql for the auth.uid() stub.
+-- ----------------------------------------------------------

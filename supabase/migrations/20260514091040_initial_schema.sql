@@ -7,10 +7,29 @@
 create extension if not exists "uuid-ossp";
 
 -- ============================================================
--- 🟢 profiles — Team members (linked to auth.users 1:1)
+-- Phase 3a Neon port: stub auth.uid() so helper functions parse.
+-- Phase 2 (NextAuth) will replace this with a real implementation that
+-- reads the logged-in user id (e.g. from a request-scoped GUC). For now
+-- this returns NULL — every RLS-style branch falls through to "not
+-- owner / not admin", which is the safe default while RLS is disabled.
+-- ============================================================
+create schema if not exists auth;
+create or replace function auth.uid()
+returns uuid
+language sql
+stable
+as $$
+  select nullif(current_setting('app.current_user_id', true), '')::uuid;
+$$;
+
+-- ============================================================
+-- 🟢 profiles — Team members
+-- Phase 3a Neon port: dropped FK to auth.users (Supabase Auth table).
+-- Phase 2 (NextAuth) will manage users in its own tables; profile.id
+-- will reference whatever NextAuth uses.
 -- ============================================================
 create table public.profiles (
-  id uuid primary key references auth.users(id) on delete cascade,
+  id uuid primary key,  -- Phase 3a: was `references auth.users(id) on delete cascade`
   full_name text not null,
   role text not null default 'member' check (role in ('admin', 'member')),
   job_title text default '业务员' check (job_title in ('业务员', '客服', '跟单')),
@@ -230,132 +249,19 @@ returns text as $$
   select role from public.profiles where id = auth.uid();
 $$ language sql security definer stable;
 
--- ── profiles ──
-alter table public.profiles enable row level security;
 
-create policy "profiles_select" on public.profiles
-  for select to authenticated using (true);
 
-create policy "profiles_insert" on public.profiles
-  for insert to authenticated with check (public.get_my_role() = 'admin');
 
-create policy "profiles_update" on public.profiles
-  for update to authenticated using (public.get_my_role() = 'admin');
 
-create policy "profiles_delete" on public.profiles
-  for delete to authenticated using (public.get_my_role() = 'admin');
 
--- ── customers ──
-alter table public.customers enable row level security;
 
-create policy "customers_select" on public.customers
-  for select to authenticated using (true);
 
-create policy "customers_insert" on public.customers
-  for insert to authenticated with check (true);
 
-create policy "customers_update" on public.customers
-  for update to authenticated using (
-    owner_id = auth.uid() or public.get_my_role() = 'admin'
-  );
 
-create policy "customers_delete" on public.customers
-  for delete to authenticated using (public.get_my_role() = 'admin');
 
--- ── contact_logs ──
-alter table public.contact_logs enable row level security;
 
-create policy "contact_logs_select" on public.contact_logs
-  for select to authenticated using (true);
 
-create policy "contact_logs_insert" on public.contact_logs
-  for insert to authenticated with check (true);
 
-create policy "contact_logs_update" on public.contact_logs
-  for update to authenticated using (
-    logged_by = auth.uid() or public.get_my_role() = 'admin'
-  );
-
-create policy "contact_logs_delete" on public.contact_logs
-  for delete to authenticated using (
-    logged_by = auth.uid() or public.get_my_role() = 'admin'
-  );
-
--- ── customer_attachments ──
-alter table public.customer_attachments enable row level security;
-
-create policy "attachments_select" on public.customer_attachments
-  for select to authenticated using (true);
-
-create policy "attachments_insert" on public.customer_attachments
-  for insert to authenticated with check (true);
-
-create policy "attachments_delete" on public.customer_attachments
-  for delete to authenticated using (
-    uploaded_by = auth.uid() or public.get_my_role() = 'admin'
-  );
-
--- ── stage_changes ──
-alter table public.stage_changes enable row level security;
-
-create policy "stage_changes_select" on public.stage_changes
-  for select to authenticated using (true);
-
-create policy "stage_changes_insert" on public.stage_changes
-  for insert to authenticated with check (true);
-
-create policy "stage_changes_update" on public.stage_changes
-  for update to authenticated using (public.get_my_role() = 'admin');
-
-create policy "stage_changes_delete" on public.stage_changes
-  for delete to authenticated using (public.get_my_role() = 'admin');
-
--- ── Phase 2 tables (quotations, quotation_items, deals, samples) ──
-alter table public.quotations enable row level security;
-create policy "quotations_select" on public.quotations for select to authenticated using (true);
-create policy "quotations_insert" on public.quotations for insert to authenticated with check (true);
-create policy "quotations_update" on public.quotations for update to authenticated using (
-  customer_id in (select id from public.customers where owner_id = auth.uid()) or public.get_my_role() = 'admin'
-);
-create policy "quotations_delete" on public.quotations for delete to authenticated using (public.get_my_role() = 'admin');
-
-alter table public.quotation_items enable row level security;
-create policy "quotation_items_select" on public.quotation_items for select to authenticated using (true);
-create policy "quotation_items_insert" on public.quotation_items for insert to authenticated with check (true);
-create policy "quotation_items_update" on public.quotation_items for update to authenticated using (true);
-create policy "quotation_items_delete" on public.quotation_items for delete to authenticated using (public.get_my_role() = 'admin');
-
-alter table public.deals enable row level security;
-create policy "deals_select" on public.deals for select to authenticated using (true);
-create policy "deals_insert" on public.deals for insert to authenticated with check (true);
-create policy "deals_update" on public.deals for update to authenticated using (
-  customer_id in (select id from public.customers where owner_id = auth.uid()) or public.get_my_role() = 'admin'
-);
-create policy "deals_delete" on public.deals for delete to authenticated using (public.get_my_role() = 'admin');
-
-alter table public.samples enable row level security;
-create policy "samples_select" on public.samples for select to authenticated using (true);
-create policy "samples_insert" on public.samples for insert to authenticated with check (true);
-create policy "samples_update" on public.samples for update to authenticated using (
-  customer_id in (select id from public.customers where owner_id = auth.uid()) or public.get_my_role() = 'admin'
-);
-create policy "samples_delete" on public.samples for delete to authenticated using (public.get_my_role() = 'admin');
-
--- ── Phase 3 tables (reminders, customer_tags) ──
-alter table public.reminders enable row level security;
-create policy "reminders_select" on public.reminders for select to authenticated using (true);
-create policy "reminders_insert" on public.reminders for insert to authenticated with check (true);
-create policy "reminders_update" on public.reminders for update to authenticated using (
-  assigned_to = auth.uid() or public.get_my_role() = 'admin'
-);
-create policy "reminders_delete" on public.reminders for delete to authenticated using (public.get_my_role() = 'admin');
-
-alter table public.customer_tags enable row level security;
-create policy "customer_tags_select" on public.customer_tags for select to authenticated using (true);
-create policy "customer_tags_insert" on public.customer_tags for insert to authenticated with check (true);
-create policy "customer_tags_delete" on public.customer_tags for delete to authenticated using (
-  created_by = auth.uid() or public.get_my_role() = 'admin'
-);
 
 -- ============================================================
 -- Storage bucket for customer attachments
@@ -363,3 +269,9 @@ create policy "customer_tags_delete" on public.customer_tags for delete to authe
 -- Run in Supabase dashboard > Storage:
 -- Create bucket: "customer-attachments" (private)
 -- Policy: authenticated users can upload/read; delete own or admin
+
+-- ----------------------------------------------------------
+-- Phase 3a Neon port: Supabase-specific SQL stripped above
+-- (RLS policies / grants / storage / pg_cron). See top of
+-- 20260514091040_initial_schema.sql for the auth.uid() stub.
+-- ----------------------------------------------------------

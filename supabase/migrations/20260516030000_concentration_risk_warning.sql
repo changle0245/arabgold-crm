@@ -12,35 +12,12 @@ create table if not exists public.system_settings (
 );
 
 -- Enable RLS
-alter table public.system_settings enable row level security;
+
 
 -- Only admins can read/write system settings
-create policy "Admins can read system settings"
-  on public.system_settings for select
-  using (
-    exists (
-      select 1 from public.profiles
-      where id = auth.uid() and role = 'admin'
-    )
-  );
 
-create policy "Admins can update system settings"
-  on public.system_settings for update
-  using (
-    exists (
-      select 1 from public.profiles
-      where id = auth.uid() and role = 'admin'
-    )
-  );
 
-create policy "Admins can insert system settings"
-  on public.system_settings for insert
-  with check (
-    exists (
-      select 1 from public.profiles
-      where id = auth.uid() and role = 'admin'
-    )
-  );
+
 
 -- Insert default concentration risk threshold (30%)
 insert into public.system_settings (key, value, description)
@@ -106,7 +83,7 @@ end;
 $$;
 
 -- Grant execute to authenticated users (RLS will handle admin-only access in frontend)
-grant execute on function public.get_concentration_risk_customers() to authenticated;
+
 
 -- Comment for documentation
 comment on function public.get_concentration_risk_customers is
@@ -114,3 +91,9 @@ comment on function public.get_concentration_risk_customers is
 
 comment on table public.system_settings is
   'System-wide configuration settings. Admin-only access.';
+
+-- ----------------------------------------------------------
+-- Phase 3a Neon port: Supabase-specific SQL stripped above
+-- (RLS policies / grants / storage / pg_cron). See top of
+-- 20260514091040_initial_schema.sql for the auth.uid() stub.
+-- ----------------------------------------------------------

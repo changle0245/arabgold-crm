@@ -16,38 +16,25 @@ create table if not exists public.customer_ownership_changes (
 create index if not exists idx_ownership_changes_customer
   on public.customer_ownership_changes(customer_id);
 
-alter table public.customer_ownership_changes enable row level security;
 
 -- SELECT: admins + the customer's current owner can see ownership history
-drop policy if exists "ownership_changes_select" on public.customer_ownership_changes;
-create policy "ownership_changes_select" on public.customer_ownership_changes
-  for select to authenticated
-  using (
-    public.current_user_is_active()
-    and (
-      public.current_user_is_admin()
-      or customer_id in (
-        select id from public.customers where owner_id = auth.uid()
-      )
-    )
-  );
+
+
 
 -- INSERT: any active user (mirrors stage_changes; in practice only admin reaches the transfer UI)
-drop policy if exists "ownership_changes_insert" on public.customer_ownership_changes;
-create policy "ownership_changes_insert" on public.customer_ownership_changes
-  for insert to authenticated
-  with check (public.current_user_is_active());
+
+
 
 -- UPDATE / DELETE: admin only
-drop policy if exists "ownership_changes_update" on public.customer_ownership_changes;
-create policy "ownership_changes_update" on public.customer_ownership_changes
-  for update to authenticated
-  using (public.current_user_is_admin());
 
-drop policy if exists "ownership_changes_delete" on public.customer_ownership_changes;
-create policy "ownership_changes_delete" on public.customer_ownership_changes
-  for delete to authenticated
-  using (public.current_user_is_admin());
+
+
 
 comment on table public.customer_ownership_changes is
   'Audit log of customer ownership transfers. Inserted by app code when customers.owner_id changes.';
+
+-- ----------------------------------------------------------
+-- Phase 3a Neon port: Supabase-specific SQL stripped above
+-- (RLS policies / grants / storage / pg_cron). See top of
+-- 20260514091040_initial_schema.sql for the auth.uid() stub.
+-- ----------------------------------------------------------

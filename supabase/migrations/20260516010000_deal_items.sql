@@ -20,34 +20,13 @@ create table if not exists public.deal_items (
 
 create index if not exists idx_deal_items_deal on public.deal_items(deal_id);
 
-alter table public.deal_items enable row level security;
 
-create policy "deal_items_select" on public.deal_items
-  for select to authenticated using (true);
 
-create policy "deal_items_insert" on public.deal_items
-  for insert to authenticated
-  with check (
-    exists (
-      select 1 from public.deals d
-      where d.id = deal_id and public.owns_customer(d.customer_id)
-    )
-  );
 
-create policy "deal_items_update" on public.deal_items
-  for update to authenticated
-  using (
-    exists (
-      select 1 from public.deals d
-      where d.id = deal_id and public.owns_customer(d.customer_id)
-    )
-  );
 
-create policy "deal_items_delete" on public.deal_items
-  for delete to authenticated
-  using (
-    exists (
-      select 1 from public.deals d
-      where d.id = deal_id and public.owns_customer(d.customer_id)
-    )
-  );
+
+-- ----------------------------------------------------------
+-- Phase 3a Neon port: Supabase-specific SQL stripped above
+-- (RLS policies / grants / storage / pg_cron). See top of
+-- 20260514091040_initial_schema.sql for the auth.uid() stub.
+-- ----------------------------------------------------------

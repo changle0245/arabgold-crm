@@ -3,7 +3,7 @@
 -- Scheduled to run daily at 02:00 AM
 
 -- Enable pg_cron extension if not already enabled
-create extension if not exists pg_cron with schema extensions;
+-- [Phase 3a Neon port — pg_cron not available in Neon free tier — Phase 5 scheduler] create extension if not exists pg_cron with schema extensions;
 
 -- Add new reminder types to the CHECK constraint
 alter table public.reminders
@@ -97,16 +97,22 @@ end;
 $$;
 
 -- Grant execute permission to authenticated users (for manual testing)
-grant execute on function public.scan_silent_customers() to authenticated;
+
 
 -- Schedule the job to run daily at 02:00 AM
 -- Note: pg_cron jobs persist across database restarts
-select cron.schedule(
-  'scan-silent-customers-daily',  -- job name
-  '0 2 * * *',                     -- cron expression: every day at 02:00
-  $$select public.scan_silent_customers();$$
-);
+-- [Phase 3a Neon port — pg_cron job — Phase 5 scheduler] select cron.schedule(
+--   'scan-silent-customers-daily',  -- job name
+--   '0 2 * * *',                     -- cron expression: every day at 02:00
+--   $$select public.scan_silent_customers();$$
+-- );
 
 -- Comment for documentation
 comment on function public.scan_silent_customers is
   'Scans for customers with no contact >= 30 days and creates reminders. Returns (scanned_count, created_count, customer_names). Can be called manually for testing.';
+
+-- ----------------------------------------------------------
+-- Phase 3a Neon port: Supabase-specific SQL stripped above
+-- (RLS policies / grants / storage / pg_cron). See top of
+-- 20260514091040_initial_schema.sql for the auth.uid() stub.
+-- ----------------------------------------------------------

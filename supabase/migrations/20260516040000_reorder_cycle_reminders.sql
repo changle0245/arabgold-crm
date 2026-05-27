@@ -108,7 +108,7 @@ end;
 $$;
 
 -- Grant execute permission to authenticated users (for manual testing)
-grant execute on function public.scan_reorder_cycle_reminders() to authenticated;
+
 
 -- Update the combined daily reminder scan job
 -- This will run both silent customer and reorder cycle scans together
@@ -146,16 +146,15 @@ begin
 end;
 $$;
 
-grant execute on function public.scan_all_auto_reminders() to authenticated;
 
 -- Update the cron job to use the combined function
-select cron.unschedule('scan-silent-customers-daily');
+-- [Phase 3a Neon port — pg_cron job — Phase 5 scheduler] select cron.unschedule('scan-silent-customers-daily');
 
-select cron.schedule(
-  'scan-all-auto-reminders-daily',  -- job name
-  '0 2 * * *',                       -- cron expression: every day at 02:00
-  $$select public.scan_all_auto_reminders();$$
-);
+-- [Phase 3a Neon port — pg_cron job — Phase 5 scheduler] select cron.schedule(
+--   'scan-all-auto-reminders-daily',  -- job name
+--   '0 2 * * *',                       -- cron expression: every day at 02:00
+--   $$select public.scan_all_auto_reminders();$$
+-- );
 
 -- Comment for documentation
 comment on function public.scan_reorder_cycle_reminders is
@@ -163,3 +162,9 @@ comment on function public.scan_reorder_cycle_reminders is
 
 comment on function public.scan_all_auto_reminders is
   'Combined function that runs both silent customer and reorder cycle reminder scans. Scheduled to run daily at 02:00 AM.';
+
+-- ----------------------------------------------------------
+-- Phase 3a Neon port: Supabase-specific SQL stripped above
+-- (RLS policies / grants / storage / pg_cron). See top of
+-- 20260514091040_initial_schema.sql for the auth.uid() stub.
+-- ----------------------------------------------------------
