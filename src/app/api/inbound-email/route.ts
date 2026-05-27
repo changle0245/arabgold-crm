@@ -136,11 +136,14 @@ export async function POST(request: NextRequest) {
   // 按 from email 找客户（如有 recipient_member，优先该 member 名下的）
   let customerId: string | null = null
   if (fromEmail) {
-    const { data: candidates } = await adminClient
-      .from('customers')
+    const { data } = await adminClient
+      .from<{ id: string; owner_id: string }>('customers')
       .select('id, owner_id')
       .eq('email', fromEmail)
-    if (candidates && candidates.length > 0) {
+    // Compat shim types `data` as `T | null` even for list queries; treat
+    // as array at runtime (it always is for non-.single() chains).
+    const candidates = (data ?? []) as Array<{ id: string; owner_id: string }>
+    if (candidates.length > 0) {
       if (recipientMemberId) {
         const mine = candidates.find(c => c.owner_id === recipientMemberId)
         customerId = (mine || candidates[0]).id

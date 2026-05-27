@@ -91,7 +91,29 @@ export async function GET(request: NextRequest) {
   }
   const ownerMap = new Map(owners.map((o) => [o.id, o]))
 
-  const result = customers.map((c) => ({ ...c, owner: ownerMap.get(c.owner_id) }))
+  // Batch tag hydration — fetch in one IN query, group by customer_id.
+  // Same trick as the single-customer GET in [customerId]/route.ts; avoids
+  // an N+1 round-trip from the client.
+  const customerIds = customers.map((c) => c.id)
+  const tagsByCustomer = new Map<string, string[]>()
+  if (customerIds.length > 0) {
+    const { data: tagRows } = await admin
+      .from('customer_tags')
+      .select('customer_id, tag')
+      .in('customer_id', customerIds)
+    const rows = (tagRows ?? []) as Array<{ customer_id: string; tag: string }>
+    for (const row of rows) {
+      const arr = tagsByCustomer.get(row.customer_id) ?? []
+      arr.push(row.tag)
+      tagsByCustomer.set(row.customer_id, arr)
+    }
+  }
+
+  const result = customers.map((c) => ({
+    ...c,
+    owner: ownerMap.get(c.owner_id),
+    tags: tagsByCustomer.get(c.id) ?? [],
+  }))
 
   return Response.json({
     ok: true,

@@ -40,13 +40,18 @@ export async function GET(request: NextRequest) {
   if (excludeId) query = query.neq('id', excludeId)
 
   const { data } = await query
-  if (!data) return Response.json({ exists: false })
+  // Compat shim's SbResult<T>.data is typed as `T | null` even for list
+  // queries (a known shim shortcoming — see lib/supabase/compat.ts). At
+  // runtime it's always `T[] | null` for non-.single() chains, so cast it
+  // here. Once a typed query builder lands we can drop the cast.
+  const rows = (data ?? []) as Array<Record<string, unknown>>
+  if (rows.length === 0) return Response.json({ exists: false })
 
   // 找匹配
   const targetNorm = isPhoneField ? normalizePhone(trimmed) : isEmailField ? trimmed.toLowerCase() : trimmed
-  let matched: any = null
-  for (const c of data) {
-    const cv = (c as any)[field]
+  let matched: Record<string, unknown> | null = null
+  for (const c of rows) {
+    const cv = c[field] as string | null | undefined
     if (!cv) continue
     const cvNorm = isPhoneField ? normalizePhone(cv) : isEmailField ? cv.toLowerCase() : cv
     if (cvNorm === targetNorm) {
@@ -56,10 +61,11 @@ export async function GET(request: NextRequest) {
   }
 
   if (matched) {
+    const owner = matched.owner as { full_name?: string } | null | undefined
     return Response.json({
       exists: true,
       customer_name: matched.contact_name,
-      owner_name: matched.owner?.full_name || '未知业务员',
+      owner_name: owner?.full_name || '未知业务员',
       matched_field: field,
       matched_value: matched[field],
     })

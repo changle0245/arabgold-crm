@@ -5,7 +5,7 @@ import { requireAdmin } from '@/lib/auth-helpers'
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const a = await requireAdmin()
-  if (a.error) return Response.json({ error: a.error }, { status: a.status })
+  if (!a.ok) return Response.json({ error: a.error }, { status: a.status })
   const user = a.user
 
   const body = await request.json()

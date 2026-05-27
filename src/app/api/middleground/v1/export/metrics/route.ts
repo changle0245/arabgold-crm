@@ -64,8 +64,9 @@ async function fetchMonthlyCount(
   if (error) throw error
 
   const buckets = new Map<string, number>()
-  for (const row of data ?? []) {
-    const raw = (row as unknown as Record<string, unknown>)[dateColumn]
+  const rows = (data ?? []) as Array<Record<string, unknown>>
+  for (const row of rows) {
+    const raw = row[dateColumn]
     if (!raw) continue
     const d = new Date(raw as string)
     if (Number.isNaN(d.getTime())) continue
@@ -109,8 +110,13 @@ async function fetchMonthlyRevenue(
   if (error) throw error
 
   const buckets = new Map<string, number>()
-  for (const row of data ?? []) {
-    const r = row as { deal_date: string | null; deal_amount: number | null; currency: string | null; status: string | null }
+  const dealRows = (data ?? []) as Array<{
+    deal_date: string | null
+    deal_amount: number | null
+    currency: string | null
+    status: string | null
+  }>
+  for (const r of dealRows) {
     if (!r.deal_date || r.deal_amount === null) continue
     // 与 get_company_month_revenue / refresh_customer_deal_stats 一致:仅累加主货币
     const c = (r.currency ?? 'USD').toUpperCase()

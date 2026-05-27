@@ -4,7 +4,7 @@ import { requireAdmin } from '@/lib/auth-helpers'
 
 export async function GET(request: NextRequest) {
   const a = await requireAdmin()
-  if (a.error) return Response.json({ error: a.error }, { status: a.status })
+  if (!a.ok) return Response.json({ error: a.error }, { status: a.status })
 
   const key = request.nextUrl.searchParams.get('key')
   if (!key) return Response.json({ error: '缺少 key 参数' }, { status: 400 })
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   const a = await requireAdmin()
-  if (a.error) return Response.json({ error: a.error }, { status: a.status })
+  if (!a.ok) return Response.json({ error: a.error }, { status: a.status })
 
   const body = await request.json().catch(() => null)
   if (!body || typeof body.key !== 'string') {

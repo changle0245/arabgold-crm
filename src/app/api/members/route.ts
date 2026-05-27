@@ -12,7 +12,7 @@ import { requireAdmin } from '@/lib/auth-helpers'
 // new member is forced to change their password on first login.
 export async function POST(request: NextRequest) {
   const a = await requireAdmin()
-  if (a.error) return Response.json({ error: a.error }, { status: a.status })
+  if (!a.ok) return Response.json({ error: a.error }, { status: a.status })
 
   const body = await request.json()
   const { email, password, full_name, role, job_title } = body

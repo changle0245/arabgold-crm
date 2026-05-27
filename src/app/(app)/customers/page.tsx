@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/auth-provider'
 import { CustomerAvatar } from '@/components/customer-avatar'
 import { TagBadge } from '@/components/tags-editor'
@@ -14,9 +13,27 @@ import { daysSince } from '@/lib/dates'
 
 const PAGE_SIZE = 30
 
+// Server returns customer rows with `owner` JOIN and `tags: string[]` already hydrated.
+type CustomerRow = Customer & { owner?: Profile; tags?: string[] }
+
+interface CustomerMetaResponse {
+  ok: boolean
+  data?: { profiles: Profile[]; countries: string[]; tags: string[] }
+  error?: string
+}
+
+interface CustomerListResponse {
+  ok: boolean
+  data?: CustomerRow[]
+  count?: number
+  page?: number
+  page_size?: number
+  error?: string
+}
+
 export default function CustomersPage() {
-  const { profile, isAdmin } = useAuth()
-  const [customers, setCustomers] = useState<(Customer & { owner?: Profile })[]>([])
+  const { isAdmin } = useAuth()
+  const [customers, setCustomers] = useState<CustomerRow[]>([])
   const [members, setMembers] = useState<Profile[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -28,7 +45,6 @@ export default function CustomersPage() {
   const [filterStage, setFilterStage] = useState('')
   const [filterSource, setFilterSource] = useState('')
   const [filterTag, setFilterTag] = useState('')
-  const [tagsByCustomer, setTagsByCustomer] = useState<Record<string, string[]>>({})
   const [distinctCountries, setDistinctCountries] = useState<string[]>([])
   const [distinctTags, setDistinctTags] = useState<string[]>([])
   // Members default to "mine only"; admins default to "all"
@@ -40,98 +56,59 @@ export default function CustomersPage() {
 
   // 一次性加载：members + distinct lists（全表统计，不分页）
   useEffect(() => {
-    const supabase = createClient()
-    Promise.all([
-      supabase.from('profiles').select('*').eq('is_active', true),
-      supabase.from('customers').select('country'),
-      supabase.from('customer_tags').select('tag'),
-    ]).then(([{ data: mems }, { data: ctry }, { data: tg }]) => {
-      setMembers(mems || [])
-      const cf: Record<string, number> = {}
-      for (const r of ctry || []) {
-        if (r.country) cf[r.country] = (cf[r.country] || 0) + 1
-      }
-      setDistinctCountries(Object.keys(cf).sort((a, b) => cf[b] - cf[a]))
-      const tf: Record<string, number> = {}
-      for (const r of tg || []) {
-        if (r.tag) tf[r.tag] = (tf[r.tag] || 0) + 1
-      }
-      setDistinctTags(Object.keys(tf).sort((a, b) => tf[b] - tf[a]))
-    })
+    fetch('/api/customer-meta')
+      .then((res) => res.json() as Promise<CustomerMetaResponse>)
+      .then((body) => {
+        if (!body.ok || !body.data) return
+        setMembers(body.data.profiles)
+        setDistinctCountries(body.data.countries)
+        setDistinctTags(body.data.tags)
+      })
+      .catch(() => { /* 网络错误：保留空过滤项，不打断主列表 */ })
   }, [])
 
   // 主查询：分页 + 服务端过滤
   const load = useCallback(async () => {
     setLoading(true)
-    const supabase = createClient()
+    const params = new URLSearchParams()
+    params.set('page', String(page))
+    params.set('scope', scopeMine ? 'mine' : 'all')
+    if (search) params.set('search', search)
+    if (filterCountry) params.set('country', filterCountry)
+    if (filterOwner) params.set('owner_id', filterOwner)
+    if (filterLevel) params.set('level', filterLevel)
+    if (filterStage) params.set('stage', filterStage)
+    if (filterSource) params.set('source', filterSource)
+    if (filterTag) params.set('tag', filterTag)
 
-    let q = supabase
-      .from('customers')
-      .select('*, owner:profiles!customers_owner_id_fkey(*)', { count: 'exact' })
-
-    if (scopeMine && profile?.id) q = q.eq('owner_id', profile.id)
-    if (filterCountry) q = q.eq('country', filterCountry)
-    if (filterOwner) q = q.eq('owner_id', filterOwner)
-    if (filterLevel) q = q.eq('level', filterLevel)
-    if (filterStage) q = q.eq('stage', filterStage)
-    if (filterSource) q = q.eq('source', filterSource)
-    if (search) {
-      const s = `%${search}%`
-      q = q.or(
-        `contact_name.ilike.${s},company_name.ilike.${s},whatsapp.ilike.${s},phone.ilike.${s},wechat_id.ilike.${s},email.ilike.${s}`
-      )
-    }
-    if (filterTag) {
-      const { data: tagRows } = await supabase
-        .from('customer_tags')
-        .select('customer_id')
-        .eq('tag', filterTag)
-      const ids = (tagRows || []).map(r => r.customer_id)
-      if (ids.length === 0) {
+    try {
+      const res = await fetch('/api/customers?' + params.toString())
+      const body = (await res.json()) as CustomerListResponse
+      if (!body.ok) {
         setCustomers([])
         setTotal(0)
-        setLoading(false)
-        return
+      } else {
+        setCustomers(body.data ?? [])
+        setTotal(body.count ?? 0)
       }
-      q = q.in('id', ids)
+    } catch {
+      setCustomers([])
+      setTotal(0)
     }
-
-    const start = (page - 1) * PAGE_SIZE
-    const { data, count } = await q
-      .order('last_contact_date', { ascending: true, nullsFirst: true })
-      .range(start, start + PAGE_SIZE - 1)
-
-    setCustomers((data as (Customer & { owner?: Profile })[]) || [])
-    setTotal(count || 0)
     setLoading(false)
   }, [
     page, search,
     filterCountry, filterOwner, filterLevel, filterStage, filterSource, filterTag,
-    scopeMine, profile?.id,
+    scopeMine,
   ])
 
   useEffect(() => { load() }, [load])
 
-  // 当前页客户的 tags
-  useEffect(() => {
-    if (customers.length === 0) {
-      setTagsByCustomer({})
-      return
-    }
-    const supabase = createClient()
-    supabase
-      .from('customer_tags')
-      .select('customer_id, tag')
-      .in('customer_id', customers.map(c => c.id))
-      .then(({ data }) => {
-        const map: Record<string, string[]> = {}
-        for (const row of data || []) {
-          if (!map[row.customer_id]) map[row.customer_id] = []
-          map[row.customer_id].push(row.tag)
-        }
-        setTagsByCustomer(map)
-      })
-  }, [customers])
+  // Tags now arrive pre-hydrated on each customer row (server batch); no extra fetch.
+  const tagsByCustomer: Record<string, string[]> = {}
+  for (const c of customers) {
+    tagsByCustomer[c.id] = c.tags ?? []
+  }
 
   // 过滤器变化时回到第 1 页（包装 setter）
   function withReset<T>(setter: (v: T) => void) {

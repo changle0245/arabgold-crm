@@ -13,7 +13,9 @@ export async function POST(
 ) {
   const { customerId } = await params
   const r = await requireUser()
-  if (r.error) return Response.json({ error: r.error }, { status: r.status })
+  if (r.error || !r.user) {
+    return Response.json({ error: r.error ?? '未登录' }, { status: r.status })
+  }
   const user = r.user
 
   const adminClient = createAdminClient()

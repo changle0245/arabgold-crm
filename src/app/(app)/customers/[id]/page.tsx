@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/auth-provider'
 import { CustomerAvatar } from '@/components/customer-avatar'
 import { TagBadge } from '@/components/tags-editor'
@@ -39,6 +38,42 @@ const typeMeta: Record<TimelineEvent['type'], {
 }
 
 type Tab = 'overview' | 'quotations' | 'deals' | 'samples'
+
+// Server-side timeline route returns these 9 collections + a profile map for hydration.
+interface TimelineResponse {
+  ok: boolean
+  data?: {
+    contact_logs: ContactLog[]
+    communication_logs: CommunicationLog[]
+    quotations: Quotation[]
+    deals: Deal[]
+    samples: Sample[]
+    reminders: Reminder[]
+    stage_changes: Array<{
+      id: string
+      from_stage: string | null
+      to_stage: string
+      changed_at: string
+      changed_by: string | null
+    }>
+    ownership_changes: Array<{
+      id: string
+      from_owner: string | null
+      to_owner: string
+      changed_at: string
+      changed_by: string | null
+    }>
+    attachments: CustomerAttachment[]
+    profiles: Record<string, Profile>
+  }
+  error?: string
+}
+
+interface CustomerDetailResponse {
+  ok: boolean
+  data?: Customer & { owner?: Profile; tags?: string[] }
+  error?: string
+}
 
 export default function CustomerDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -77,103 +112,99 @@ export default function CustomerDetailPage() {
   const [editingTranslation, setEditingTranslation] = useState<{ logId: string; original: string | null; translated: string | null } | null>(null)
 
   const loadData = useCallback(async () => {
-    const supabase = createClient()
-    const [
-      { data: cust },
-      { data: contactLogs },
-      { data: atts },
-      { data: tagRows },
-      { data: quots },
-      { data: dealRows },
-      { data: sampleRows },
-      { data: stageRows },
-      { data: ownershipRows },
-      { data: reminderRows },
-      { data: memberRows },
-      { data: commLogs, count: commCount },
-    ] = await Promise.all([
-      supabase
-        .from('customers')
-        .select('*, owner:profiles!customers_owner_id_fkey(*)')
-        .eq('id', id)
-        .single(),
-      supabase
-        .from('contact_logs')
-        .select('*, logger:profiles!contact_logs_logged_by_fkey(*)')
-        .eq('customer_id', id)
-        .order('log_date', { ascending: false }),
-      supabase
-        .from('customer_attachments')
-        .select('*, uploader:profiles!customer_attachments_uploaded_by_fkey(*)')
-        .eq('customer_id', id)
-        .order('created_at', { ascending: false }),
-      supabase.from('customer_tags').select('tag').eq('customer_id', id),
-      supabase
-        .from('quotations')
-        .select('*, creator:profiles!quotations_created_by_fkey(*)')
-        .eq('customer_id', id)
-        .order('created_at', { ascending: false }),
-      supabase
-        .from('deals')
-        .select('*, creator:profiles!deals_created_by_fkey(*)')
-        .eq('customer_id', id)
-        .order('deal_date', { ascending: false }),
-      supabase
-        .from('samples')
-        .select('*, creator:profiles!samples_created_by_fkey(*)')
-        .eq('customer_id', id)
-        .order('created_at', { ascending: false }),
-      supabase
-        .from('stage_changes')
-        .select('*, changer:profiles!stage_changes_changed_by_fkey(full_name)')
-        .eq('customer_id', id)
-        .order('changed_at', { ascending: false }),
-      supabase
-        .from('customer_ownership_changes')
-        .select('*, changer:profiles!customer_ownership_changes_changed_by_fkey(full_name), from_profile:profiles!customer_ownership_changes_from_owner_fkey(full_name), to_profile:profiles!customer_ownership_changes_to_owner_fkey(full_name)')
-        .eq('customer_id', id)
-        .order('changed_at', { ascending: false }),
-      supabase
-        .from('reminders')
-        .select('*, assignee:profiles!reminders_assigned_to_fkey(*)')
-        .eq('customer_id', id)
-        .order('due_date', { ascending: true }),
-      supabase
-        .from('profiles')
-        .select('*')
-        .eq('is_active', true),
-      supabase
-        .from('communication_logs')
-        .select('*, editor:profiles!communication_logs_translation_edited_by_fkey(full_name)', { count: 'exact' })
-        .eq('customer_id', id)
-        .order('sent_at', { ascending: false })
-        .limit(200),
+    // 1) Customer + owner + tags  (server route handles ACL + JOIN + tags batch)
+    // 2) Timeline payload bundles the 9 related tables + a profiles map for
+    //    client-side hydration of the joined display names.
+    // 3) Profiles meta (for ReminderPanel assignee dropdown etc.) comes from
+    //    /api/customer-meta (active profiles only).
+    const [custRes, tlRes, metaRes] = await Promise.all([
+      fetch(`/api/customers/${id}`).then((r) => r.json() as Promise<CustomerDetailResponse>),
+      fetch(`/api/customers/${id}/timeline`).then((r) => r.json() as Promise<TimelineResponse>),
+      fetch('/api/customer-meta').then((r) => r.json() as Promise<{
+        ok: boolean
+        data?: { profiles: Profile[]; countries: string[]; tags: string[] }
+      }>),
     ])
+
+    if (!custRes.ok || !custRes.data) {
+      setCustomer(null)
+      setLoading(false)
+      return
+    }
+    const cust = custRes.data
     setCustomer(cust)
-    setLogs(contactLogs || [])
-    setAttachments(atts || [])
-    setTags((tagRows || []).map(r => r.tag))
-    setQuotations(quots || [])
-    setDeals(dealRows || [])
-    setSamples(sampleRows || [])
-    setStageChanges((stageRows || []).map((s: any) => ({
-      id: s.id,
-      from_stage: s.from_stage,
-      to_stage: s.to_stage,
-      changed_at: s.changed_at,
-      changed_by_name: s.changer?.full_name || '',
-    })))
-    setOwnershipChanges((ownershipRows || []).map((o: any) => ({
-      id: o.id,
-      from_owner_name: o.from_profile?.full_name || null,
-      to_owner_name: o.to_profile?.full_name || '',
-      changed_at: o.changed_at,
-      changed_by_name: o.changer?.full_name || '',
-    })))
-    setReminders((reminderRows as Reminder[]) || [])
-    setMembers((memberRows as Profile[]) || [])
-    setCommunicationLogs((commLogs as (CommunicationLog & { editor?: Profile })[]) || [])
-    setCommTotal(commCount || 0)
+    setTags(cust.tags ?? [])
+
+    const tl = tlRes.ok ? tlRes.data : undefined
+    const profilesMap = tl?.profiles ?? {}
+    const pf = (idVal: string | null | undefined): Profile | undefined =>
+      idVal ? profilesMap[idVal] : undefined
+
+    // Contact logs — hydrate `logger` from profiles map
+    const contactLogs = (tl?.contact_logs ?? []).map((l) => ({
+      ...l,
+      logger: pf(l.logged_by),
+    }))
+    setLogs(contactLogs)
+
+    // Attachments — hydrate `uploader`
+    const atts = (tl?.attachments ?? []).map((a) => ({
+      ...a,
+      uploader: pf(a.uploaded_by),
+    }))
+    setAttachments(atts)
+
+    // Quotations / deals / samples — hydrate `creator`
+    setQuotations(
+      (tl?.quotations ?? []).map((q) => ({ ...q, creator: pf(q.created_by) }))
+    )
+    setDeals(
+      (tl?.deals ?? []).map((d) => ({ ...d, creator: pf(d.created_by) }))
+    )
+    setSamples(
+      (tl?.samples ?? []).map((s) => ({ ...s, creator: pf(s.created_by) }))
+    )
+
+    // Stage changes — derive `changed_by_name` from profiles map
+    setStageChanges(
+      (tl?.stage_changes ?? []).map((s) => ({
+        id: s.id,
+        from_stage: s.from_stage,
+        to_stage: s.to_stage,
+        changed_at: s.changed_at,
+        changed_by_name: pf(s.changed_by)?.full_name || '',
+      }))
+    )
+
+    // Ownership changes — derive from/to/changed_by names
+    setOwnershipChanges(
+      (tl?.ownership_changes ?? []).map((o) => ({
+        id: o.id,
+        from_owner_name: pf(o.from_owner)?.full_name ?? null,
+        to_owner_name: pf(o.to_owner)?.full_name || '',
+        changed_at: o.changed_at,
+        changed_by_name: pf(o.changed_by)?.full_name || '',
+      }))
+    )
+
+    // Reminders — hydrate `assignee`
+    setReminders(
+      (tl?.reminders ?? []).map((r) => ({ ...r, assignee: pf(r.assigned_to) }))
+    )
+
+    // Communication logs — hydrate `editor` from translation_edited_by
+    const commLogs = (tl?.communication_logs ?? []).map((c) => ({
+      ...c,
+      editor: pf(c.translation_edited_by),
+    }))
+    setCommunicationLogs(commLogs)
+    setCommTotal(commLogs.length)
+
+    // Members (for reminder panel dropdown etc.) — active profiles only.
+    if (metaRes.ok && metaRes.data) {
+      setMembers(metaRes.data.profiles)
+    }
+
     setLoading(false)
   }, [id])
 
@@ -191,14 +222,28 @@ export default function CustomerDetailPage() {
   async function handleAddLog(e: React.FormEvent) {
     e.preventDefault()
     setSavingLog(true)
-    const supabase = createClient()
-    await supabase.from('contact_logs').insert({
-      customer_id: id,
-      logged_by: profile!.id,
-      log_date: logDate,
-      tag: logTag,
-      note: logNote.trim() || null,
-    })
+    try {
+      const res = await fetch(`/api/customers/${id}/contact-logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          log_date: logDate,
+          tag: logTag,
+          note: logNote.trim() || null,
+        }),
+      })
+      const body = (await res.json()) as { ok: boolean; error?: string }
+      if (!body.ok) {
+        alert('保存联系记录失败: ' + (body.error ?? '未知错误'))
+        setSavingLog(false)
+        return
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      alert('保存联系记录失败: ' + msg)
+      setSavingLog(false)
+      return
+    }
     setShowLogForm(false)
     setLogNote('')
     setLogDate(todayLocalISO())
@@ -210,34 +255,27 @@ export default function CustomerDetailPage() {
     const file = e.target.files?.[0]
     if (!file) return
     setUploading(true)
-    const supabase = createClient()
-
-    const ext = file.name.split('.').pop()
-    const path = `${id}/${Date.now()}.${ext}`
-
-    const { error: uploadError } = await supabase.storage
-      .from('customer-attachments')
-      .upload(path, file)
-
-    if (uploadError) {
-      alert('上传失败: ' + uploadError.message)
+    try {
+      const form = new FormData()
+      form.set('file', file)
+      const res = await fetch(`/api/customers/${id}/attachments`, {
+        method: 'POST',
+        body: form,
+      })
+      const body = (await res.json()) as { ok: boolean; error?: string }
+      if (!body.ok) {
+        alert('上传失败: ' + (body.error ?? '未知错误'))
+        setUploading(false)
+        e.target.value = ''
+        return
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      alert('上传失败: ' + msg)
       setUploading(false)
+      e.target.value = ''
       return
     }
-
-    const { data: urlData } = supabase.storage
-      .from('customer-attachments')
-      .getPublicUrl(path)
-
-    await supabase.from('customer_attachments').insert({
-      customer_id: id,
-      uploaded_by: profile!.id,
-      file_name: file.name,
-      file_url: urlData.publicUrl,
-      file_type: file.type.startsWith('image/') ? 'image' : 'document',
-      file_size: file.size,
-    })
-
     setUploading(false)
     e.target.value = ''
     loadData()
@@ -246,8 +284,19 @@ export default function CustomerDetailPage() {
   async function confirmDeleteAttachment() {
     if (!pendingDeleteAttachment) return
     setDeletingAttachment(true)
-    const supabase = createClient()
-    await supabase.from('customer_attachments').delete().eq('id', pendingDeleteAttachment.id)
+    try {
+      const res = await fetch(
+        `/api/customers/${id}/attachments/${pendingDeleteAttachment.id}`,
+        { method: 'DELETE' }
+      )
+      const body = (await res.json()) as { ok: boolean; error?: string }
+      if (!body.ok) {
+        alert('删除附件失败: ' + (body.error ?? '未知错误'))
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      alert('删除附件失败: ' + msg)
+    }
     setDeletingAttachment(false)
     setPendingDeleteAttachment(null)
     loadData()
@@ -255,10 +304,17 @@ export default function CustomerDetailPage() {
 
   async function doDeleteCustomer() {
     setDeleting(true)
-    const supabase = createClient()
-    const { error } = await supabase.from('customers').delete().eq('id', id)
-    if (error) {
-      alert('删除失败: ' + error.message)
+    try {
+      const res = await fetch(`/api/customers/${id}`, { method: 'DELETE' })
+      const body = (await res.json()) as { ok: boolean; error?: string }
+      if (!body.ok) {
+        alert('删除失败: ' + (body.error ?? '未知错误'))
+        setDeleting(false)
+        return
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      alert('删除失败: ' + msg)
       setDeleting(false)
       return
     }

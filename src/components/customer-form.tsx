@@ -2,13 +2,13 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
 import { useAuth } from './auth-provider'
 import { ScreenshotImporter } from './screenshot-importer'
 import { AvatarCropper } from './avatar-cropper'
 import { CustomerAvatar } from './customer-avatar'
 import { TagsEditor } from './tags-editor'
 import type { Customer, Profile } from '@/lib/types'
+import type { ParsedContact } from '@/lib/parse-contact'
 import { Camera, Upload, Trash2 } from 'lucide-react'
 import { todayLocalISO } from '@/lib/dates'
 import {
@@ -18,7 +18,27 @@ import {
 } from '@/lib/constants'
 
 interface Props {
-  customer?: Customer
+  // In edit mode the parent passes the hydrated server response, including
+  // the `tags: string[]` array. We accept either `Customer` (POST/new) or
+  // `Customer & { tags?: string[] }` (PATCH/edit) — `tags` is only read here.
+  customer?: Customer & { tags?: string[] }
+}
+
+interface AvatarUploadResponse {
+  ok: boolean
+  data?: { url: string; path: string }
+  error?: string
+}
+
+interface MutationResponse {
+  ok: boolean
+  data?: { id: string } & Record<string, unknown>
+  error?: string
+}
+
+interface MetaResponse {
+  ok: boolean
+  data?: { profiles: Profile[]; countries: string[]; tags: string[] }
 }
 
 const EMPTY_FORM = {
@@ -61,21 +81,21 @@ export function CustomerForm({ customer }: Props) {
   const [tags, setTags] = useState<string[]>([])
   const avatarInputRef = useRef<HTMLInputElement>(null)
 
-  // 编辑模式：加载该客户已有标签
+  // 编辑模式：标签由 parent edit page 的 GET /api/customers/[id] 一次性带回,
+  // 直接读 props 即可。新建模式 customer 为 undefined,tags 保持空数组。
   useEffect(() => {
-    if (!customer?.id) return
-    const supabase = createClient()
-    supabase.from('customer_tags').select('tag').eq('customer_id', customer.id).then(({ data }) => {
-      if (data) setTags(data.map(d => d.tag))
-    })
-  }, [customer?.id])
+    if (customer?.tags) setTags(customer.tags)
+  }, [customer?.tags])
 
   const [form, setForm] = useState(() => {
     if (!customer) return { ...EMPTY_FORM, owner_id: profile?.id || '' }
     return {
       ...EMPTY_FORM,
       ...Object.fromEntries(
-        Object.keys(EMPTY_FORM).map(k => [k, (customer as any)[k] ?? ''])
+        Object.keys(EMPTY_FORM).map(k => [
+          k,
+          (customer as unknown as Record<string, unknown>)[k] ?? '',
+        ])
       ),
     }
   })
@@ -107,10 +127,12 @@ export function CustomerForm({ customer }: Props) {
   }, [profile, form.owner_id])
 
   useEffect(() => {
-    const supabase = createClient()
-    supabase.from('profiles').select('*').eq('is_active', true).then(({ data }) => {
-      setMembers(data || [])
-    })
+    fetch('/api/customer-meta')
+      .then((res) => res.json() as Promise<MetaResponse>)
+      .then((body) => {
+        if (body.ok && body.data) setMembers(body.data.profiles)
+      })
+      .catch(() => { /* 静默：失败时 select 为空,管理员需重试 */ })
   }, [])
 
   const FIELD_LABELS: Record<string, string> = {
@@ -156,31 +178,34 @@ export function CustomerForm({ customer }: Props) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
-    const supabase = createClient()
 
-    // L7: 头像在提交时才上传(裁剪时只暂存 blob)。放弃表单不会留下存储孤儿;
-    // 保存失败会删掉本次刚传的文件;替换/移除头像成功后会删掉旧文件。
-    const avatarStoragePath = (url: string | null | undefined): string | null => {
-      const marker = '/customer-attachments/'
-      const i = url ? url.indexOf(marker) : -1
-      return i >= 0 ? url!.slice(i + marker.length) : null
-    }
+    // L7: 头像在提交时才上传(裁剪时只暂存 blob)。放弃表单不会留下存储孤儿。
+    // 旧头像清理 + 失败回滚由后端处理(本次最小化迁移先省略,等专门的头像清理路由)。
     let finalAvatarUrl = avatarUrl
-    let newAvatarPath: string | null = null
     if (pendingAvatarBlob) {
-      const path = `avatars/${profile!.id}/${Date.now()}.jpg`
-      const { error: upErr } = await supabase.storage
-        .from('customer-attachments')
-        .upload(path, pendingAvatarBlob, { contentType: 'image/jpeg', upsert: false })
-      if (upErr) { alert('头像上传失败: ' + upErr.message); setSaving(false); return }
-      newAvatarPath = path
-      finalAvatarUrl = supabase.storage.from('customer-attachments').getPublicUrl(path).data.publicUrl
+      const fd = new FormData()
+      fd.set('file', new File([pendingAvatarBlob], 'avatar.jpg', { type: 'image/jpeg' }))
+      try {
+        const res = await fetch('/api/customer-avatars', { method: 'POST', body: fd })
+        const body = (await res.json()) as AvatarUploadResponse
+        if (!body.ok || !body.data) {
+          alert('头像上传失败: ' + (body.error ?? '未知错误'))
+          setSaving(false)
+          return
+        }
+        finalAvatarUrl = body.data.url
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        alert('头像上传失败: ' + msg)
+        setSaving(false)
+        return
+      }
     }
 
     // 把所有空字符串转为 null（数据库友好）
-    const payload: any = { avatar_url: finalAvatarUrl }
+    const payload: Record<string, unknown> = { avatar_url: finalAvatarUrl }
     for (const key of Object.keys(form)) {
-      const v = (form as any)[key]
+      const v = (form as Record<string, unknown>)[key]
       if (typeof v === 'string') {
         payload[key] = v.trim() === '' ? null : v.trim()
       } else {
@@ -193,63 +218,66 @@ export function CustomerForm({ customer }: Props) {
     payload.level = form.level || '待定'
     payload.stage = form.stage || '待定'
 
-    // 保存标签的辅助函数：先删除该 customer 所有标签，再 insert 当前的
-    async function syncTags(customerId: string) {
-      await supabase.from('customer_tags').delete().eq('customer_id', customerId)
-      if (tags.length > 0) {
-        await supabase.from('customer_tags').insert(
-          tags.map(tag => ({ customer_id: customerId, tag, created_by: profile!.id }))
-        )
-      }
-    }
+    // tags 由 POST/PATCH 路由统一处理 customer_tags 同步(先 delete 再 insert)。
+    const body = { ...payload, tags }
 
     if (isEdit) {
-      const oldOwnerId = customer!.owner_id
-      const { error } = await supabase.from('customers').update(payload).eq('id', customer!.id)
-      if (error) {
-        if (newAvatarPath) await supabase.storage.from('customer-attachments').remove([newAvatarPath])
-        alert('保存失败: ' + error.message); setSaving(false); return
+      try {
+        const res = await fetch(`/api/customers/${customer!.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const resBody = (await res.json()) as MutationResponse
+        if (!resBody.ok) {
+          alert('保存失败: ' + (resBody.error ?? '未知错误'))
+          setSaving(false)
+          return
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        alert('保存失败: ' + msg)
+        setSaving(false)
+        return
       }
-      // stage_changes 由 trg_record_stage_change 触发器自动写入。
-      // ⑰ 修:update 成功后,3 个 side-effect 互不依赖,并行执行(原本 ~4s 串行 → 单次往返)
-      const sideEffects: PromiseLike<unknown>[] = [syncTags(customer!.id)]
-      if (payload.owner_id !== oldOwnerId) {
-        sideEffects.push(
-          supabase.from('customer_ownership_changes').insert({
-            customer_id: customer!.id, changed_by: profile!.id, from_owner: oldOwnerId, to_owner: payload.owner_id,
-          })
-        )
-      }
-      // L7: 头像被替换或移除 → 删掉旧文件,避免存储孤儿
-      const oldPath = avatarStoragePath(customer!.avatar_url)
-      if (oldPath && customer!.avatar_url !== finalAvatarUrl) {
-        sideEffects.push(supabase.storage.from('customer-attachments').remove([oldPath]))
-      }
-      await Promise.all(sideEffects)
+      // stage_changes / customer_ownership_changes 由 trigger + 后端写入。
       router.push(`/customers/${customer!.id}`)
     } else {
-      const insertData = {
-        ...payload,
-        created_by: profile!.id,
+      const insertBody = {
+        ...body,
         last_contact_date: todayLocalISO(),
       }
-      const { data, error } = await supabase.from('customers').insert(insertData).select('id').single()
-      if (error) {
-        if (newAvatarPath) await supabase.storage.from('customer-attachments').remove([newAvatarPath])
-        alert('保存失败: ' + error.message); setSaving(false); return
+      try {
+        const res = await fetch('/api/customers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(insertBody),
+        })
+        const resBody = (await res.json()) as MutationResponse
+        if (!resBody.ok || !resBody.data?.id) {
+          alert('保存失败: ' + (resBody.error ?? '未知错误'))
+          setSaving(false)
+          return
+        }
+        router.push(`/customers/${resBody.data.id}`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        alert('保存失败: ' + msg)
+        setSaving(false)
+        return
       }
-      // stage_changes 由 trg_record_stage_change 触发器自动写入。
-      await syncTags(data.id)
-      router.push(`/customers/${data.id}`)
     }
   }
 
-  function handleApplyImported(parsed: any) {
+  function handleApplyImported(parsed: ParsedContact) {
     const filled: Set<string> = new Set()
     setForm(f => {
-      const next = { ...f }
-      const set = (k: string, v: string | undefined) => {
-        if (v && !(f as any)[k]) { (next as any)[k] = v; filled.add(k) }
+      const next: typeof f = { ...f }
+      const set = (k: keyof typeof EMPTY_FORM, v: string | undefined) => {
+        if (v && !(f as Record<string, string>)[k]) {
+          ;(next as Record<string, string>)[k] = v
+          filled.add(k)
+        }
       }
       set('contact_name', parsed.contact_name)
       set('whatsapp', parsed.whatsapp)

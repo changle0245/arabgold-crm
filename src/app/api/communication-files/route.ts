@@ -12,7 +12,7 @@ function normalizePath(raw: string): string {
 
 export async function GET(request: NextRequest) {
   const r = await requireUser()
-  if (r.error) return Response.json({ error: r.error }, { status: r.status })
+  if (!r.ok) return Response.json({ error: r.error }, { status: r.status })
 
   const raw = request.nextUrl.searchParams.get('path')
   if (!raw) return Response.json({ error: '缺少 path 参数' }, { status: 400 })

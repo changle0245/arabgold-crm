@@ -67,7 +67,9 @@ async function fetchCustomers(
   const { data, error } = await q
   if (error) throw error
 
-  const rows: Entity[] = (data ?? []).slice(0, limit).map((c) => {
+  // Compat shim types `data` as `T | null` even for list queries; cast.
+  const customerRows = (data ?? []) as Array<Record<string, unknown>>
+  const rows: Entity[] = customerRows.slice(0, limit).map((c) => {
     const id = c.id as string
     return {
       site_id: SITE_ID(),
@@ -99,7 +101,7 @@ async function fetchCustomers(
     }
   })
 
-  const hasMore = (data ?? []).length > limit
+  const hasMore = customerRows.length > limit
   const last = rows[rows.length - 1]
   const nextCursor = hasMore && last ? encodeCursor(last.updated_at, last.entity_id) : null
   return { rows, nextCursor }
@@ -129,7 +131,8 @@ async function fetchDeals(
   const { data, error } = await q
   if (error) throw error
 
-  const rows: Entity[] = (data ?? []).slice(0, limit).map((d) => {
+  const dealRows = (data ?? []) as Array<Record<string, unknown>>
+  const rows: Entity[] = dealRows.slice(0, limit).map((d) => {
     const amount = d.deal_amount === null || d.deal_amount === undefined ? null : Number(d.deal_amount)
     const currency = ((d.currency as string | null) ?? 'USD').toUpperCase()
     return {
@@ -157,7 +160,7 @@ async function fetchDeals(
     }
   })
 
-  const hasMore = (data ?? []).length > limit
+  const hasMore = dealRows.length > limit
   const last = rows[rows.length - 1]
   const nextCursor = hasMore && last ? encodeCursor(last.created_at, last.entity_id) : null
   return { rows, nextCursor }
@@ -186,7 +189,8 @@ async function fetchQuotes(
   const { data, error } = await q
   if (error) throw error
 
-  const rows: Entity[] = (data ?? []).slice(0, limit).map((qrow) => {
+  const quoteRows = (data ?? []) as Array<Record<string, unknown>>
+  const rows: Entity[] = quoteRows.slice(0, limit).map((qrow) => {
     const total = qrow.total_amount === null || qrow.total_amount === undefined ? null : Number(qrow.total_amount)
     const currency = ((qrow.currency as string | null) ?? 'USD').toUpperCase()
     return {
@@ -210,7 +214,7 @@ async function fetchQuotes(
     }
   })
 
-  const hasMore = (data ?? []).length > limit
+  const hasMore = quoteRows.length > limit
   const last = rows[rows.length - 1]
   const nextCursor = hasMore && last ? encodeCursor(last.created_at, last.entity_id) : null
   return { rows, nextCursor }

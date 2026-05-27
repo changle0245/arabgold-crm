@@ -37,7 +37,8 @@ async function fetchStageChanged(
     .order('changed_at', { ascending: true })
     .limit(limit)
   if (error) throw error
-  return (data ?? []).map((r) => ({
+  const rows = (data ?? []) as Array<Record<string, unknown>>
+  return rows.map((r) => ({
     site_id: SITE_ID(),
     event_id: `stage_changed:${r.id}`,
     event_type: 'stage_changed',
@@ -63,7 +64,8 @@ async function fetchDealCreated(
     .order('created_at', { ascending: true })
     .limit(limit)
   if (error) throw error
-  return (data ?? []).map((d) => {
+  const rows = (data ?? []) as Array<Record<string, unknown>>
+  return rows.map((d) => {
     const amount = d.deal_amount === null || d.deal_amount === undefined ? null : Number(d.deal_amount)
     return {
       site_id: SITE_ID(),
@@ -95,7 +97,8 @@ async function fetchCustomerCreated(
     .order('created_at', { ascending: true })
     .limit(limit)
   if (error) throw error
-  return (data ?? []).map((c) => ({
+  const rows = (data ?? []) as Array<Record<string, unknown>>
+  return rows.map((c) => ({
     site_id: SITE_ID(),
     event_id: `customer_created:${c.id}`,
     event_type: 'customer_created',
@@ -124,7 +127,8 @@ async function fetchContactLogged(
     .order('created_at', { ascending: true })
     .limit(limit)
   if (error) throw error
-  return (data ?? []).map((c) => ({
+  const rows = (data ?? []) as Array<Record<string, unknown>>
+  return rows.map((c) => ({
     site_id: SITE_ID(),
     event_id: `contact_logged:${c.id}`,
     event_type: 'contact_logged',
