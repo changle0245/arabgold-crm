@@ -1,27 +1,25 @@
 import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { auth } from '@/lib/auth'
+import { db } from '@/lib/db'
 
 export default async function Home() {
-  const supabase = await createClient()
-  // H6: getUser() 向 Auth 服务器复验 JWT;getSession() 只解 cookie 不复验。
-  const { data: { user } } = await supabase.auth.getUser()
+  const session = await auth()
+  if (!session?.user?.id) redirect('/login')
 
-  if (!user) redirect('/login')
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, is_active')
-    .eq('id', user.id)
-    .single()
+  const { rows } = await db.query<{ role: 'admin' | 'member'; is_active: boolean }>(
+    'select role, is_active from public.profiles where id = $1 limit 1',
+    [session.user.id]
+  )
+  const profile = rows[0]
 
   if (!profile || profile.is_active === false) {
-    await supabase.auth.signOut()
     redirect('/login?reason=inactive')
   }
 
-  if (profile.role === 'admin') {
-    redirect('/dashboard/boss')
-  } else {
-    redirect('/dashboard/personal')
+  if (session.user.mustChangePassword) {
+    redirect('/account/change-password')
   }
+
+  if (profile.role === 'admin') redirect('/dashboard/boss')
+  redirect('/dashboard/personal')
 }

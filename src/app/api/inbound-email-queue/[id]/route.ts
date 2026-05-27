@@ -1,44 +1,42 @@
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { NextRequest } from 'next/server'
 import { getTranslator } from '@/lib/translator'
+import { requireUser } from '@/lib/auth-helpers'
 
-// PATCH /api/inbound-email-queue/[id]
-// body: { action: 'merge' | 'discard', customer_id?: string }
-//
-// merge：把 queue 邮件作为 communication_log 插入指定客户，queue 标 matched
-// discard：仅标 discarded，不删除（保留审计）
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return Response.json({ error: '未登录' }, { status: 401 })
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, is_active')
-    .eq('id', user.id)
-    .single()
-  if (!profile || profile.is_active === false) {
-    return Response.json({ error: '账号已停用' }, { status: 403 })
-  }
+  const r = await requireUser()
+  if (r.error) return Response.json({ error: r.error }, { status: r.status })
+  const user = r.user
 
   const adminClient = createAdminClient()
   const { data: queueItem } = await adminClient
-    .from('inbound_email_queue')
+    .from<{
+      id: string
+      status: string
+      recipient_member: string | null
+      subject: string | null
+      content: string | null
+      from_name: string | null
+      from_email: string | null
+      to_email: string | null
+      received_at: string
+      raw_meta: Record<string, unknown> | null
+      attachments: { name: string; url: string }[] | null
+    }>('inbound_email_queue')
     .select('*')
     .eq('id', id)
     .single()
   if (!queueItem) return Response.json({ error: '记录不存在' }, { status: 404 })
 
-  if (profile.role !== 'admin' && queueItem.recipient_member !== user.id) {
+  if (user.role !== 'admin' && queueItem.recipient_member !== user.id) {
     return Response.json({ error: '无权操作此邮件' }, { status: 403 })
   }
   if (queueItem.status !== 'pending') {
-    return Response.json({ error: '该邮件已处理（status=' + queueItem.status + '）' }, { status: 400 })
+    return Response.json({ error: '该邮件已处理(status=' + queueItem.status + ')' }, { status: 400 })
   }
 
   const body = await request.json().catch(() => null)
@@ -61,12 +59,12 @@ export async function PATCH(
     if (!body.customer_id) return Response.json({ error: '需要 customer_id' }, { status: 400 })
 
     const { data: customer } = await adminClient
-      .from('customers')
+      .from<{ id: string; owner_id: string }>('customers')
       .select('id, owner_id')
       .eq('id', body.customer_id)
       .single()
     if (!customer) return Response.json({ error: '客户不存在' }, { status: 404 })
-    if (profile.role !== 'admin' && customer.owner_id !== user.id) {
+    if (user.role !== 'admin' && customer.owner_id !== user.id) {
       return Response.json({ error: '无权将邮件归并到该客户' }, { status: 403 })
     }
 
@@ -80,7 +78,7 @@ export async function PATCH(
     } catch { /* stub or fail */ }
 
     const rawMeta = (queueItem.raw_meta || {}) as Record<string, unknown>
-    const attachments = queueItem.attachments as { name: string; url: string }[] | null
+    const attachments = queueItem.attachments
 
     const { error: insertErr } = await adminClient.from('communication_logs').insert({
       customer_id: body.customer_id,

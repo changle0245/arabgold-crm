@@ -1,9 +1,8 @@
-import { createClient } from '@supabase/supabase-js'
+// Phase 3: admin client (formerly Supabase service_role) now backed by Neon via pg.
+// API-compatible with the small subset of supabase-js used in this codebase
+// (see ./compat.ts for the supported surface).
+import { makeSbClient } from './compat'
 
 export function createAdminClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  )
+  return makeSbClient()
 }

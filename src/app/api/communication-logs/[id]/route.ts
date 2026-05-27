@@ -1,40 +1,27 @@
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { NextRequest } from 'next/server'
+import { requireUser } from '@/lib/auth-helpers'
 
-// PATCH /api/communication-logs/[id]
-// body: { translated_content: string }
-// 修订译文 — admin 或 客户 owner 可修订
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return Response.json({ error: '未登录' }, { status: 401 })
+  const r = await requireUser()
+  if (r.error) return Response.json({ error: r.error }, { status: r.status })
+  const user = r.user
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, is_active')
-    .eq('id', user.id)
-    .single()
-  if (!profile || profile.is_active === false) {
-    return Response.json({ error: '账号已停用' }, { status: 403 })
-  }
-
-  // 查 log 拿 customer_id，再校验访问权限
   const adminClient = createAdminClient()
   const { data: log } = await adminClient
-    .from('communication_logs')
+    .from<{ id: string; customer_id: string }>('communication_logs')
     .select('id, customer_id')
     .eq('id', id)
     .single()
   if (!log) return Response.json({ error: '记录不存在' }, { status: 404 })
 
-  if (profile.role !== 'admin') {
+  if (user.role !== 'admin') {
     const { data: customer } = await adminClient
-      .from('customers')
+      .from<{ owner_id: string }>('customers')
       .select('owner_id')
       .eq('id', log.customer_id)
       .single()

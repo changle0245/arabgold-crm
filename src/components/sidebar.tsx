@@ -3,13 +3,12 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from './auth-provider'
-import { createClient } from '@/lib/supabase/client'
+import { signOut } from 'next-auth/react'
 import {
   Users, LayoutDashboard, BarChart3, UserCog, LogOut, Menu, X, Bell, FileText, Package, Inbox,
 } from 'lucide-react'
 import { useState, useEffect, useCallback } from 'react'
 import { BellNotification } from './bell-notification'
-import { todayLocalISO } from '@/lib/dates'
 
 const navItems = [
   { href: '/customers', label: '客户列表', icon: Users, roles: ['admin', 'member'] },
@@ -31,15 +30,13 @@ export function Sidebar() {
 
   const loadOverdue = useCallback(async () => {
     if (!profile?.id) return
-    const supabase = createClient()
-    const today = todayLocalISO()
-    const { count } = await supabase
-      .from('reminders')
-      .select('*', { count: 'exact', head: true })
-      .eq('assigned_to', profile.id)
-      .eq('status', 'pending')
-      .lte('due_date', today)
-    setOverdueCount(count || 0)
+    try {
+      const res = await fetch('/api/reminders/overdue-count', { cache: 'no-store' })
+      const body = await res.json()
+      setOverdueCount(body.count ?? 0)
+    } catch {
+      setOverdueCount(0)
+    }
   }, [profile?.id])
 
   useEffect(() => {
@@ -61,8 +58,7 @@ export function Sidebar() {
   }, [loadOverdue, pathname])
 
   async function handleLogout() {
-    const supabase = createClient()
-    await supabase.auth.signOut()
+    await signOut({ redirect: false })
     router.push('/login')
   }
 

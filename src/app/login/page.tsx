@@ -1,18 +1,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
+import { signIn } from 'next-auth/react'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const router = useRouter()
 
-  // Read ?reason=inactive (set by auth-provider when a deactivated session
-  // is detected) without pulling in useSearchParams + a Suspense boundary.
   useEffect(() => {
     if (typeof window === 'undefined') return
     const params = new URLSearchParams(window.location.search)
@@ -26,34 +22,20 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
 
-    const supabase = createClient()
-    const { data: signInData, error: authError } = await supabase.auth.signInWithPassword({ email, password })
+    const res = await signIn('credentials', {
+      email,
+      password,
+      redirect: false,
+    })
 
-    if (authError || !signInData.user) {
+    if (!res?.ok) {
       setError('邮箱或密码错误')
       setLoading(false)
       return
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role, is_active, must_change_password')
-      .eq('id', signInData.user.id)
-      .single()
-
-    if (!profile || profile.is_active === false) {
-      await supabase.auth.signOut()
-      setError('账号已停用,请联系管理员')
-      setLoading(false)
-      return
-    }
-
-    // 修 #4: 用 window.location.replace 做硬跳转，避免 router.push 在 React 状态结算过程中
-    // 让"登录中..."按钮卡 15+ 秒。硬跳转直接 kill 当前 SPA 状态，新页面 fresh 加载。
-    let target = '/dashboard/personal'
-    if (profile.must_change_password) target = '/account/change-password'
-    else if (profile.role === 'admin') target = '/dashboard/boss'
-    window.location.replace(target)
+    // proxy.ts 会基于 session 把 / 跳到正确的 dashboard,这里硬跳根路径触发它即可
+    window.location.replace('/')
   }
 
   return (
@@ -109,7 +91,7 @@ export default function LoginPage() {
         </form>
 
         <p className="text-center text-xs text-gray-400 mt-4">
-          账号由管理员创建，如需开通请联系管理员
+          账号由管理员创建,如需开通请联系管理员
         </p>
       </div>
     </div>

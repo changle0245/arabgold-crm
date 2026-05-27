@@ -1,34 +1,13 @@
-import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { auth } from '@/lib/auth'
 
 export async function proxy(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request })
+  const session = await auth()
+  const user = session?.user ?? null
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
-
-  // H6: getUser() 会向 Auth 服务器复验 JWT;getSession() 只解 cookie 不复验。
-  const { data: { user } } = await supabase.auth.getUser()
-
-  const isLoginPage = request.nextUrl.pathname === '/login'
+  const pathname = request.nextUrl.pathname
+  const isLoginPage = pathname === '/login'
+  const isChangePassPage = pathname.startsWith('/account/change-password')
 
   if (!user && !isLoginPage) {
     const url = request.nextUrl.clone()
@@ -37,18 +16,22 @@ export async function proxy(request: NextRequest) {
   }
 
   if (user && isLoginPage) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-
     const url = request.nextUrl.clone()
-    url.pathname = profile?.role === 'admin' ? '/dashboard/boss' : '/dashboard/personal'
+    if (user.mustChangePassword) {
+      url.pathname = '/account/change-password'
+    } else {
+      url.pathname = user.role === 'admin' ? '/dashboard/boss' : '/dashboard/personal'
+    }
     return NextResponse.redirect(url)
   }
 
-  return supabaseResponse
+  if (user && user.mustChangePassword && !isChangePassPage && !isLoginPage) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/account/change-password'
+    return NextResponse.redirect(url)
+  }
+
+  return NextResponse.next()
 }
 
 export const config = {

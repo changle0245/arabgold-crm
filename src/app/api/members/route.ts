@@ -1,23 +1,18 @@
-import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
 import { NextRequest } from 'next/server'
+import bcrypt from 'bcryptjs'
+import crypto from 'node:crypto'
+import { db } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth-helpers'
 
+// POST /api/members  → admin invite a new member
+// body: { email, password, full_name, role?, job_title? }
+//
+// Phase 3 NextAuth rewrite: instead of supabase.auth.admin.createUser(), we
+// hash the password with bcrypt and insert into public.profiles directly. The
+// new member is forced to change their password on first login.
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return Response.json({ error: '未登录' }, { status: 401 })
-
-  const { data: currentProfile } = await supabase
-    .from('profiles')
-    .select('role, is_active')
-    .eq('id', user.id)
-    .single()
-
-  // M7: 停用的管理员(is_active=false)也必须拦截 —— 这些路由用 service-role
-  // 客户端绕过 RLS,所以 is_active 校验只能在这里做。
-  if (currentProfile?.role !== 'admin' || currentProfile?.is_active === false) {
-    return Response.json({ error: '无权限' }, { status: 403 })
-  }
+  const a = await requireAdmin()
+  if (a.error) return Response.json({ error: a.error }, { status: a.status })
 
   const body = await request.json()
   const { email, password, full_name, role, job_title } = body
@@ -25,36 +20,38 @@ export async function POST(request: NextRequest) {
   if (!email || !password || !full_name) {
     return Response.json({ error: '缺少必填字段' }, { status: 400 })
   }
-  // 修 #7: 密码至少 6 位（前端 UI 提示「至少6位」是装饰文案，必须后端兜底）
   if (typeof password !== 'string' || password.length < 6) {
     return Response.json({ error: '密码至少 6 位' }, { status: 400 })
   }
-
-  const adminClient = createAdminClient()
-
-  const { data: authData, error: authError } = await adminClient.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-  })
-
-  if (authError) {
-    return Response.json({ error: authError.message }, { status: 400 })
+  if (typeof email !== 'string' || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return Response.json({ error: '邮箱格式不正确' }, { status: 400 })
   }
 
-  const { error: profileError } = await adminClient
-    .from('profiles')
-    .insert({
-      id: authData.user.id,
-      full_name,
-      role: role || 'member',
-      job_title: job_title || '业务员',
-      must_change_password: true,
-    })
-
-  if (profileError) {
-    return Response.json({ error: profileError.message }, { status: 400 })
+  // Uniqueness check (case-insensitive) — the unique index also enforces this,
+  // but a friendly error is nicer than a 500.
+  const existing = await db.query(
+    'select 1 from public.profiles where lower(email) = lower($1) limit 1',
+    [email]
+  )
+  if (existing.rows.length > 0) {
+    return Response.json({ error: '该邮箱已被使用' }, { status: 400 })
   }
 
-  return Response.json({ success: true, id: authData.user.id })
+  const id = crypto.randomUUID()
+  const hash = await bcrypt.hash(password, 12)
+
+  try {
+    await db.query(
+      `insert into public.profiles
+         (id, email, full_name, role, job_title, password_hash, must_change_password, is_active)
+       values
+         ($1, $2, $3, $4, $5, $6, true, true)`,
+      [id, email, full_name, role || 'member', job_title || '业务员', hash]
+    )
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return Response.json({ error: '创建失败: ' + msg }, { status: 400 })
+  }
+
+  return Response.json({ success: true, id })
 }
