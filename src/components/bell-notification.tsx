@@ -33,47 +33,64 @@ export function BellNotification() {
   const loadReminders = useCallback(async () => {
     if (!profile?.id) return
 
-    const supabase = createClient()
+    // HOTFIX 2026-05-27: phase-3b 客户端 supabase.from() 改造未覆盖到本组件,
+    // 浏览器侧 supabase compat client 会 throw "Browser-side .from() is not
+    // supported in Phase 3"。此 throw 之前未被捕获 → 整个 sidebar 加载失败
+    // → 所有登录后页面卡在"加载中..."。
+    //
+    // 临时止血:try/catch 吞掉异常(角标显示 0,下拉显示空),让 sidebar 能挂载。
+    // TODO(phase-3b): 新增 GET /api/reminders/bell?profile_id=... 端点,返回
+    //   { pending_count, latest5: Reminder[] },本组件改 fetch 调用。
+    try {
+      const supabase = createClient()
 
-    // Get pending count
-    const { count } = await supabase
-      .from('reminders')
-      .select('*', { count: 'exact', head: true })
-      .eq('assigned_to', profile.id)
-      .eq('status', 'pending')
+      // Get pending count
+      const { count } = await supabase
+        .from('reminders')
+        .select('*', { count: 'exact', head: true })
+        .eq('assigned_to', profile.id)
+        .eq('status', 'pending')
 
-    setPendingCount(count || 0)
+      setPendingCount(count || 0)
 
-    // Get latest 5 reminders
-    const { data } = await supabase
-      .from('reminders')
-      .select(`
-        id,
-        customer_id,
-        assigned_to,
-        type,
-        note,
-        due_date,
-        status,
-        created_by,
-        completed_at,
-        created_at,
-        customer:customers!reminders_customer_id_fkey(
+      // Get latest 5 reminders
+      const { data } = await supabase
+        .from('reminders')
+        .select(`
           id,
-          contact_name
-        )
-      `)
-      .eq('assigned_to', profile.id)
-      .eq('status', 'pending')
-      .order('due_date', { ascending: true })
-      .order('created_at', { ascending: false })
-      .limit(5)
+          customer_id,
+          assigned_to,
+          type,
+          note,
+          due_date,
+          status,
+          created_by,
+          completed_at,
+          created_at,
+          customer:customers!reminders_customer_id_fkey(
+            id,
+            contact_name
+          )
+        `)
+        .eq('assigned_to', profile.id)
+        .eq('status', 'pending')
+        .order('due_date', { ascending: true })
+        .order('created_at', { ascending: false })
+        .limit(5)
 
-    const normalized: Reminder[] = (data || []).map((r: any) => ({
-      ...r,
-      customer: Array.isArray(r.customer) ? (r.customer[0] ?? null) : (r.customer ?? null),
-    }))
-    setLatestReminders(normalized)
+      const normalized: Reminder[] = (data || []).map((r: any) => ({
+        ...r,
+        customer: Array.isArray(r.customer) ? (r.customer[0] ?? null) : (r.customer ?? null),
+      }))
+      setLatestReminders(normalized)
+    } catch (err) {
+      // 不打 console.error 避免污染日志;静默失败 — 用户看到 0 条提醒而非崩溃
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[bell-notification] loadReminders failed (expected during phase-3b migration):', err)
+      }
+      setPendingCount(0)
+      setLatestReminders([])
+    }
   }, [profile?.id])
 
   useEffect(() => {
