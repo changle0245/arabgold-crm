@@ -142,6 +142,8 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
         unit_price: it.unit_price,
         amount: it.amount,
         remark: it.remark,
+        // Phase 5C: 保留 master_product_id 来源(编辑时 round-trip)
+        master_product_id: it.master_product_id ?? null,
       }))
     )
   }
@@ -200,6 +202,7 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
 
     // H3: 明细用事务型 RPC 原子替换(删+插同一事务),插入失败会回滚,
     // 不会静默丢失。编辑时即便清空明细也要调用 RPC 才能把旧明细删掉。
+    // Phase 5C: payload 带 master_product_id(P2 完工前留 null)
     if (dealId) {
       const lineItems = validItems.map(it => ({
         product_name: it.product_name,
@@ -209,6 +212,7 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
         unit_price: Number(it.unit_price) || 0,
         amount: Number(it.amount) || 0,
         remark: it.remark || null,
+        master_product_id: it.master_product_id ?? null,
       }))
       const { error: itemsErr } = await supabase.rpc('replace_deal_items', {
         p_deal_id: dealId,

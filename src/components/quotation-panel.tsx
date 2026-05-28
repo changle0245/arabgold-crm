@@ -87,6 +87,8 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
       setItems(prevItems.map(it => ({
         product_name: it.product_name, spec: it.spec, quantity: it.quantity,
         unit: it.unit, unit_price: it.unit_price, amount: it.amount, remark: it.remark,
+        // Phase 5C: 复制版本 / 编辑时保留 master_product_id 来源
+        master_product_id: it.master_product_id ?? null,
       })))
     } else {
       setItems([emptyItem()])
@@ -148,6 +150,8 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
 
       // H3: 明细用事务型 RPC 原子替换(删+插同一事务)。插入失败整体回滚,
       // 不会出现"旧明细已删、新明细没进去"的静默丢失。
+      // Phase 5C: payload 带 master_product_id(P2 quotation form 接入产品选择器后填值,
+      // 现暂时全留 null,RPC 接受 null 走默认值)。
       const lineItems = validItems.map(it => ({
         product_name: it.product_name,
         spec: it.spec || null,
@@ -156,6 +160,7 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
         unit_price: Number(it.unit_price) || 0,
         amount: Number(it.amount) || 0,
         remark: it.remark || null,
+        master_product_id: it.master_product_id ?? null,
       }))
       const { error: itemsErr } = await supabase.rpc('replace_quotation_items', {
         p_quotation_id: editingId,
@@ -189,6 +194,7 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
         return
       }
 
+      // Phase 5C: payload 带 master_product_id(P2 完工前留 null)
       const lineItems = validItems.map(it => ({
         product_name: it.product_name,
         spec: it.spec || null,
@@ -197,6 +203,7 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
         unit_price: Number(it.unit_price) || 0,
         amount: Number(it.amount) || 0,
         remark: it.remark || null,
+        master_product_id: it.master_product_id ?? null,
       }))
       const { error: itemsErr } = await supabase.rpc('replace_quotation_items', {
         p_quotation_id: q.id,
