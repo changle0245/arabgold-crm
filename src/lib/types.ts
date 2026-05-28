@@ -58,6 +58,8 @@ export interface Customer {
   created_by: string | null
   created_at: string
   updated_at: string
+  // 中台主数据关联 (Phase 4 stage 4)
+  master_customer_id: string | null
   // 联表
   owner?: Profile
 }
@@ -124,6 +126,8 @@ export interface QuotationItem {
   unit_price: number | null
   amount: number | null
   remark: string | null
+  // 中台主数据关联 (Phase 4 stage 4) — 选中台产品时填,自由文本商品保持 null
+  master_product_id: string | null
 }
 
 export interface Deal {
@@ -158,6 +162,8 @@ export interface DealItem {
   unit_price: number | null
   amount: number | null
   remark: string | null
+  // 中台主数据关联 (Phase 4 stage 4)
+  master_product_id: string | null
 }
 
 export interface Sample {

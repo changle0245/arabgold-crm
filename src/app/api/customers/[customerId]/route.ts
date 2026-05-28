@@ -8,6 +8,7 @@
 import { type NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireUser, requireAdmin } from '@/lib/auth-helpers'
+import { fireAndForgetCustomerSync } from '@/lib/master-sync'
 import type { Customer, Profile } from '@/lib/types'
 
 export const runtime = 'nodejs'
@@ -260,6 +261,9 @@ export async function PATCH(
     .eq('customer_id', customerId)
   const tagRowsArr = (tagRows ?? []) as Array<{ tag: string }>
   const tags = tagRowsArr.map((row) => row.tag)
+
+  // Phase 4 stage 4 · 中台主数据 outbound push (fire-and-forget,不阻塞 response)
+  fireAndForgetCustomerSync(customer)
 
   return Response.json({ ok: true, data: { ...customer, owner, tags } })
 }

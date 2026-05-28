@@ -8,6 +8,7 @@
 import { type NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireUser } from '@/lib/auth-helpers'
+import { fireAndForgetCustomerSync } from '@/lib/master-sync'
 import type { Customer, Profile } from '@/lib/types'
 
 export const runtime = 'nodejs'
@@ -246,6 +247,9 @@ export async function POST(request: NextRequest) {
       console.warn('[api/customers POST] tag insert failed (customer created):', tagErr.message)
     }
   }
+
+  // Phase 4 stage 4 · 中台主数据 outbound push (fire-and-forget,不阻塞 response)
+  fireAndForgetCustomerSync(inserted)
 
   return Response.json({ ok: true, data: inserted })
 }
