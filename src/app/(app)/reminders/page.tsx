@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/auth-provider'
 import { Pagination } from '@/components/pagination'
 import type { Reminder } from '@/lib/types'
@@ -11,6 +10,14 @@ import { Bell, Check, X, Clock, Filter, Rewind } from 'lucide-react'
 import { daysFromNow, addDays } from '@/lib/dates'
 
 type StatusFilter = 'pending' | 'completed' | 'all'
+
+interface RemindersResponse {
+  ok: boolean
+  items?: Reminder[]
+  total?: number
+  stats?: { overdue: number; today: number; upcoming: number }
+  error?: string
+}
 
 const PAGE_SIZE = 30
 
@@ -23,7 +30,7 @@ export default function RemindersPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending')
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [scopeFilter, setScopeFilter] = useState<'mine' | 'all'>('mine')
-  // 各状态的全局计数（不受当前 typeFilter / scopeFilter 影响，仅 scopeFilter 影响）
+  // 各状态的全局计数（不受当前 typeFilter 影响，仅 scopeFilter 影响）
   const [pendingStats, setPendingStats] = useState<{ overdue: number; today: number; upcoming: number }>({
     overdue: 0, today: 0, upcoming: 0,
   })
@@ -31,66 +38,51 @@ export default function RemindersPage() {
   const load = useCallback(async () => {
     if (!profile?.id) return
     setLoading(true)
-    const supabase = createClient()
-
-    let query = supabase
-      .from('reminders')
-      .select(
-        '*, customer:customers!reminders_customer_id_fkey(id, contact_name, company_name), assignee:profiles!reminders_assigned_to_fkey(*)',
-        { count: 'exact' }
-      )
-      .order('due_date', { ascending: true })
-
-    if (scopeFilter === 'mine') query = query.eq('assigned_to', profile.id)
-    if (statusFilter !== 'all') query = query.eq('status', statusFilter)
-    if (typeFilter !== 'all') query = query.eq('type', typeFilter)
-
-    const start = (page - 1) * PAGE_SIZE
-    const { data, count } = await query.range(start, start + PAGE_SIZE - 1)
-    setReminders((data as Reminder[]) || [])
-    setTotal(count || 0)
-    setLoading(false)
+    const params = new URLSearchParams()
+    params.set('page', String(page))
+    params.set('scope', scopeFilter)
+    params.set('status', statusFilter)
+    if (typeFilter && typeFilter !== 'all') params.set('type', typeFilter)
+    try {
+      const res = await fetch('/api/reminders?' + params.toString())
+      const body = (await res.json()) as RemindersResponse
+      if (!body.ok) {
+        setReminders([])
+        setTotal(0)
+      } else {
+        setReminders(body.items || [])
+        setTotal(body.total || 0)
+        if (body.stats) setPendingStats(body.stats)
+      }
+    } catch {
+      setReminders([])
+      setTotal(0)
+    } finally {
+      setLoading(false)
+    }
   }, [profile?.id, statusFilter, typeFilter, scopeFilter, page])
 
   useEffect(() => { load() }, [load])
 
-  // pending 状态汇总（独立于分页，用于顶部 3 个 stat 卡片）
-  useEffect(() => {
-    if (!profile?.id) return
-    const supabase = createClient()
-    const todayISO = new Date().toISOString().slice(0, 10)
-
-    const base = () => {
-      let q = supabase
-        .from('reminders')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'pending')
-      if (scopeFilter === 'mine') q = q.eq('assigned_to', profile.id)
-      return q
-    }
-
-    Promise.all([
-      base().lt('due_date', todayISO),
-      base().eq('due_date', todayISO),
-      base().gt('due_date', todayISO),
-    ]).then(([{ count: a }, { count: b }, { count: c }]) => {
-      setPendingStats({ overdue: a || 0, today: b || 0, upcoming: c || 0 })
-    })
-  }, [profile?.id, scopeFilter, reminders.length])
-
   async function markStatus(id: string, status: string) {
-    const supabase = createClient()
-    await supabase.from('reminders').update({ status }).eq('id', id)
+    await fetch(`/api/reminders/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    })
     load()
     // 修 #12: 通知 sidebar 立即刷新红圈
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('reminders-changed'))
   }
 
   async function postpone(id: string, days: number) {
-    const supabase = createClient()
     const r = reminders.find(x => x.id === id)
     if (!r?.due_date) return
-    await supabase.from('reminders').update({ due_date: addDays(r.due_date, days) }).eq('id', id)
+    await fetch(`/api/reminders/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ due_date: addDays(r.due_date, days) }),
+    })
     load()
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('reminders-changed'))
   }

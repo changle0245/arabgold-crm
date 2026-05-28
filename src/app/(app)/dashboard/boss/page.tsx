@@ -2,10 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/auth-provider'
 import type { Customer, Profile, Deal, Reminder } from '@/lib/types'
-import { OVERDUE_DAYS_THRESHOLD, SILENT_DAYS_THRESHOLD, STAGES, DEAL_STATUS_LABELS } from '@/lib/constants'
+import { OVERDUE_DAYS_THRESHOLD, SILENT_DAYS_THRESHOLD, STAGES } from '@/lib/constants'
 import { Users, AlertTriangle, Moon, TrendingUp, DollarSign, Package, Repeat, Bell, ShieldAlert, ArrowUp, ArrowDown, Target, Pencil } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import { daysSince, todayLocalISO } from '@/lib/dates'
@@ -20,6 +19,26 @@ type ConcentrationRiskCustomer = {
   deal_count: number
 }
 
+type TodayProgress = Record<string, { newCustomers: number; stageChanges: number; logs: number }>
+
+interface BossDashboardData {
+  customers: Customer[]
+  members: Profile[]
+  deals: Deal[]
+  pending_reminders: Reminder[]
+  concentration_risk_customers: ConcentrationRiskCustomer[]
+  today_progress: TodayProgress
+  monthly_target: number | null
+  concentration_threshold: number | null
+  main_currency: string
+}
+
+interface DashboardResponse {
+  ok: boolean
+  data?: BossDashboardData
+  error?: string
+}
+
 const COLORS = ['#d1d5db', '#34d399', '#60a5fa', '#a78bfa', '#f59e0b', '#ef4444']
 
 export default function BossDashboard() {
@@ -31,7 +50,7 @@ export default function BossDashboard() {
   const [pendingReminders, setPendingReminders] = useState<Reminder[]>([])
   const [concentrationRiskCustomers, setConcentrationRiskCustomers] = useState<ConcentrationRiskCustomer[]>([])
   const [concentrationThreshold, setConcentrationThreshold] = useState<number>(0.30)
-  const [todayProgress, setTodayProgress] = useState<Record<string, { newCustomers: number; stageChanges: number; logs: number }>>({})
+  const [todayProgress, setTodayProgress] = useState<TodayProgress>({})
   const [monthlyTarget, setMonthlyTarget] = useState<number | null>(null)
   const [showTargetForm, setShowTargetForm] = useState(false)
   const [targetInput, setTargetInput] = useState('')
@@ -43,16 +62,48 @@ export default function BossDashboard() {
   const [mainCurrency, setMainCurrency] = useState<string>('USD')
   const [loading, setLoading] = useState(true)
 
+  async function refreshDashboard() {
+    try {
+      const res = await fetch('/api/dashboard/boss', { method: 'POST' })
+      const body = (await res.json()) as DashboardResponse
+      if (!body.ok || !body.data) {
+        setLoading(false)
+        return
+      }
+      const d = body.data
+      setCustomers(d.customers || [])
+      setMembers(d.members || [])
+      // Cancelled deals are already filtered server-side.
+      setDeals(d.deals || [])
+      setPendingReminders(d.pending_reminders || [])
+      setConcentrationRiskCustomers(d.concentration_risk_customers || [])
+      setTodayProgress(d.today_progress || {})
+      setMonthlyTarget(d.monthly_target)
+      if (d.concentration_threshold !== null) {
+        setConcentrationThreshold(d.concentration_threshold)
+      }
+      setMainCurrency((d.main_currency || 'USD').toUpperCase())
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function saveMonthlyTarget() {
     const raw = targetInput.trim()
     if (raw === '') {
       // Empty input means clear target
       setSavingTarget(true)
-      const supabase = createClient()
-      await supabase.from('system_settings').upsert(
-        { key: 'monthly_revenue_target', value: null, description: '本月业绩目标（美元）' },
-        { onConflict: 'key' }
-      )
+      const res = await fetch('/api/system-settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'monthly_revenue_target', value: null }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        alert('保存失败：' + (body?.error ?? '未知错误'))
+        setSavingTarget(false)
+        return
+      }
       setMonthlyTarget(null)
       setShowTargetForm(false)
       setSavingTarget(false)
@@ -64,13 +115,14 @@ export default function BossDashboard() {
       return
     }
     setSavingTarget(true)
-    const supabase = createClient()
-    const { error } = await supabase.from('system_settings').upsert(
-      { key: 'monthly_revenue_target', value: num, description: '本月业绩目标（美元）' },
-      { onConflict: 'key' }
-    )
-    if (error) {
-      alert('保存失败：' + error.message)
+    const res = await fetch('/api/system-settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'monthly_revenue_target', value: num }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      alert('保存失败：' + (body?.error ?? '未知错误'))
       setSavingTarget(false)
       return
     }
@@ -93,24 +145,20 @@ export default function BossDashboard() {
     }
     const decimal = pct / 100
     setSavingThreshold(true)
-    const supabase = createClient()
-    const { error } = await supabase.from('system_settings').upsert(
-      {
-        key: 'concentration_risk_threshold',
-        value: decimal,
-        description: '大客户集中度风险阈值（单客户占总营收比例超过此值时预警），范围 0.05-0.30',
-      },
-      { onConflict: 'key' }
-    )
-    if (error) {
-      alert('保存失败：' + error.message)
+    const res = await fetch('/api/system-settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'concentration_risk_threshold', value: decimal }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      alert('保存失败：' + (body?.error ?? '未知错误'))
       setSavingThreshold(false)
       return
     }
     setConcentrationThreshold(decimal)
-    // 阈值变化后立即重算风险客户
-    const { data: refreshed } = await supabase.rpc('get_concentration_risk_customers')
-    setConcentrationRiskCustomers((refreshed as ConcentrationRiskCustomer[]) || [])
+    // 阈值变化后重新拉取大屏（包含 risk customer + 阈值同步）
+    await refreshDashboard()
     setShowThresholdForm(false)
     setSavingThreshold(false)
   }
@@ -126,66 +174,7 @@ export default function BossDashboard() {
 
   useEffect(() => {
     if (!isAdmin) return
-    const supabase = createClient()
-    const today = todayLocalISO()
-
-    async function load() {
-      const [{ data: custs }, { data: mems }, { data: todayCustomers }, { data: todayStageChanges }, { data: todayLogs }, { data: allDeals }, { data: allReminders }, { data: riskCustomers }, { data: allSettings }] = await Promise.all([
-        supabase.from('customers').select('*'),
-        supabase.from('profiles').select('*').eq('is_active', true),
-        supabase.from('customers').select('created_by').gte('created_at', today + 'T00:00:00'),
-        supabase.from('stage_changes').select('changed_by').gte('changed_at', today + 'T00:00:00'),
-        supabase.from('contact_logs').select('logged_by').eq('log_date', today),
-        supabase.from('deals').select('*'),
-        supabase.from('reminders').select('*').eq('status', 'pending'),
-        supabase.rpc('get_concentration_risk_customers'),
-        supabase.from('system_settings').select('key, value').in('key', ['monthly_revenue_target', 'concentration_risk_threshold', 'main_currency']),
-      ])
-
-      setCustomers(custs || [])
-      setMembers(mems || [])
-      // H2: 排除已取消的成交单 —— 营收/目标/排行/复购率/趋势全部基于 deals 派生,
-      // 取消单不是真实业绩。NULL 状态(实际不会出现,列默认 pending)按存活处理。
-      setDeals((allDeals || []).filter(d => d.status !== 'cancelled'))
-      setPendingReminders((allReminders as Reminder[]) || [])
-      setConcentrationRiskCustomers((riskCustomers as ConcentrationRiskCustomer[]) || [])
-
-      // Parse settings
-      const settingsMap = new Map((allSettings || []).map(s => [s.key, s.value]))
-      const targetVal = settingsMap.get('monthly_revenue_target')
-      if (targetVal !== undefined && targetVal !== null && targetVal !== 'null') {
-        setMonthlyTarget(typeof targetVal === 'number' ? targetVal : Number(targetVal))
-      } else {
-        setMonthlyTarget(null)
-      }
-      const thresholdVal = settingsMap.get('concentration_risk_threshold')
-      if (thresholdVal !== undefined && thresholdVal !== null) {
-        setConcentrationThreshold(typeof thresholdVal === 'number' ? thresholdVal : Number(thresholdVal))
-      }
-      // 修 #11: main_currency 默认 USD
-      const mainCurrencyVal = settingsMap.get('main_currency')
-      if (typeof mainCurrencyVal === 'string' && mainCurrencyVal.length > 0) {
-        setMainCurrency(mainCurrencyVal.toUpperCase())
-      }
-
-      const progress: Record<string, { newCustomers: number; stageChanges: number; logs: number }> = {}
-      // 修 #3: 今日进度只统计 member 角色，过滤掉 admin（管理员不背销售目标）
-      ;(mems || []).filter(m => m.role !== 'admin').forEach(m => {
-        progress[m.id] = { newCustomers: 0, stageChanges: 0, logs: 0 }
-      })
-      ;(todayCustomers || []).forEach(c => {
-        if (c.created_by && progress[c.created_by]) progress[c.created_by].newCustomers++
-      })
-      ;(todayStageChanges || []).forEach(s => {
-        if (s.changed_by && progress[s.changed_by]) progress[s.changed_by].stageChanges++
-      })
-      ;(todayLogs || []).forEach(l => {
-        if (l.logged_by && progress[l.logged_by]) progress[l.logged_by].logs++
-      })
-      setTodayProgress(progress)
-      setLoading(false)
-    }
-    load()
+    refreshDashboard()
   }, [isAdmin])
 
   if (!isAdmin || loading) return <div className="p-6 text-gray-400">加载中..</div>
@@ -342,6 +331,8 @@ export default function BossDashboard() {
   const targetProgress = monthlyTarget && monthlyTarget > 0
     ? (monthDealAmount / monthlyTarget) * 100
     : null
+  void momChange
+  void yoyChange
 
   return (
     <div className="p-4 lg:p-6 max-w-6xl">
@@ -843,7 +834,12 @@ export default function BossDashboard() {
 }
 
 function StatCard({ icon: Icon, label, value, danger, gold, subtext }: {
-  icon: any; label: string; value: number | string; danger?: boolean; gold?: boolean; subtext?: string
+  icon: React.ComponentType<{ size?: number; className?: string }>
+  label: string
+  value: number | string
+  danger?: boolean
+  gold?: boolean
+  subtext?: string
 }) {
   return (
     <div className={`bg-white rounded-xl border p-4 ${danger ? 'border-red-200' : gold ? 'border-gold-200' : 'border-gray-200'}`}>
@@ -856,4 +852,3 @@ function StatCard({ icon: Icon, label, value, danger, gold, subtext }: {
     </div>
   )
 }
-

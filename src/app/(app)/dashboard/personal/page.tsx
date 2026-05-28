@@ -2,13 +2,37 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/auth-provider'
 import type { Customer, Profile, Reminder } from '@/lib/types'
 import { OVERDUE_DAYS_THRESHOLD, SILENT_DAYS_THRESHOLD, REMINDER_TYPE_LABELS } from '@/lib/constants'
-import { Users, AlertTriangle, MessageSquare, UserPlus, Bell, Check, Calendar, TrendingUp, PieChart } from 'lucide-react'
-import { daysSince, daysFromNow, todayLocalISO, addDays } from '@/lib/dates'
-import { currencySymbol, sumInMainCurrency } from '@/lib/currency'
+import { Users, AlertTriangle, MessageSquare, Bell, Check, Calendar, PieChart } from 'lucide-react'
+import { daysSince, daysFromNow } from '@/lib/dates'
+import { currencySymbol } from '@/lib/currency'
+
+interface WeekMonthStats {
+  newCustomers: number
+  logs: number
+  stageChanges: number
+  deals: number
+}
+
+interface PersonalDashboardData {
+  my_customers: (Customer & { owner?: Profile })[]
+  today_new_count: number
+  today_logs: number
+  my_reminders: Reminder[]
+  weekly_stats: WeekMonthStats
+  monthly_stats: WeekMonthStats
+  my_month_revenue: number
+  company_month_revenue: number
+  main_currency: string
+}
+
+interface DashboardResponse {
+  ok: boolean
+  data?: PersonalDashboardData
+  error?: string
+}
 
 export default function PersonalDashboard() {
   const { profile } = useAuth()
@@ -18,147 +42,47 @@ export default function PersonalDashboard() {
   const [myReminders, setMyReminders] = useState<Reminder[]>([])
   const [loading, setLoading] = useState(true)
   // P1-2 states
-  const [weeklyStats, setWeeklyStats] = useState({ newCustomers: 0, logs: 0, stageChanges: 0, deals: 0 })
-  const [monthlyStats, setMonthlyStats] = useState({ newCustomers: 0, logs: 0, stageChanges: 0, deals: 0 })
+  const [weeklyStats, setWeeklyStats] = useState<WeekMonthStats>({ newCustomers: 0, logs: 0, stageChanges: 0, deals: 0 })
+  const [monthlyStats, setMonthlyStats] = useState<WeekMonthStats>({ newCustomers: 0, logs: 0, stageChanges: 0, deals: 0 })
   const [myMonthRevenue, setMyMonthRevenue] = useState(0)
   const [companyMonthRevenue, setCompanyMonthRevenue] = useState(0)
   const [mainCurrency, setMainCurrency] = useState<string>('USD')
 
+  // Use a stable load function so markDone can call it
   const load = async () => {
     if (!profile?.id) return
-    const supabase = createClient()
-    const today = todayLocalISO()
-
-    // M4: 日期范围全部基于 CN 本地日期(today = todayLocalISO()),不用
-    // new Date().toISOString() —— 那是 UTC,CN 凌晨 0-8 点会偏一天(见 dates.ts)。
-    const monthStart = today.slice(0, 8) + '01'
-
-    // 本周一(ISO 周,周一为首),按 CN 本地日期算
-    const [ty, tm, td] = today.split('-').map(Number)
-    const dow = new Date(ty, tm - 1, td).getDay() // 0=周日..6=周六
-    const weekStartDate = addDays(today, -(dow === 0 ? 6 : dow - 1)) // 'YYYY-MM-DD'
-    const weekStartTs = `${weekStartDate}T00:00:00+08:00` // timestamptz 列用
-
-    const [{ data: custs }, { count: newCount }, { count: logCount }, { data: reminderRows }, { count: weekCustomers }, { count: monthCustomers }, { count: weekLogs }, { count: monthLogs }, { count: weekStageChanges }, { count: monthStageChanges }, { data: weekDeals }, { data: monthDeals }, { data: myMonthDeals }, { data: companyRevenueRaw }, { data: mainCurrencyRow }] = await Promise.all([
-      supabase
-        .from('customers')
-        .select('*')
-        .eq('owner_id', profile.id)
-        .order('last_contact_date', { ascending: true, nullsFirst: true }),
-      supabase
-        .from('customers')
-        .select('*', { count: 'exact', head: true })
-        .eq('created_by', profile.id)
-        .gte('created_at', today + 'T00:00:00'),
-      supabase
-        .from('contact_logs')
-        .select('*', { count: 'exact', head: true })
-        .eq('logged_by', profile.id)
-        .eq('log_date', today),
-      supabase
-        .from('reminders')
-        .select('*, customer:customers!reminders_customer_id_fkey(id, contact_name, company_name)')
-        .eq('assigned_to', profile.id)
-        .eq('status', 'pending')
-        .order('due_date', { ascending: true }),
-      // P1-2.1: Weekly stats
-      supabase
-        .from('customers')
-        .select('*', { count: 'exact', head: true })
-        .eq('created_by', profile.id)
-        .gte('created_at', weekStartTs),
-      supabase
-        .from('customers')
-        .select('*', { count: 'exact', head: true })
-        .eq('created_by', profile.id)
-        .gte('created_at', monthStart + 'T00:00:00'),
-      supabase
-        .from('contact_logs')
-        .select('*', { count: 'exact', head: true })
-        .eq('logged_by', profile.id)
-        .gte('log_date', weekStartDate),
-      supabase
-        .from('contact_logs')
-        .select('*', { count: 'exact', head: true })
-        .eq('logged_by', profile.id)
-        .gte('log_date', monthStart),
-      supabase
-        .from('stage_changes')
-        .select('*', { count: 'exact', head: true })
-        .eq('changed_by', profile.id)
-        .gte('changed_at', weekStartTs),
-      supabase
-        .from('stage_changes')
-        .select('*', { count: 'exact', head: true })
-        .eq('changed_by', profile.id)
-        .gte('changed_at', monthStart + 'T00:00:00'),
-      supabase
-        .from('deals')
-        .select('*', { count: 'exact' })
-        .eq('created_by', profile.id)
-        .neq('status', 'cancelled')
-        .gte('deal_date', weekStartDate),
-      supabase
-        .from('deals')
-        .select('*', { count: 'exact' })
-        .eq('created_by', profile.id)
-        .neq('status', 'cancelled')
-        .gte('deal_date', monthStart),
-      // P1-2.2: Revenue comparison — 修 #11: select currency 以便按主货币过滤
-      supabase
-        .from('deals')
-        .select('deal_amount, currency')
-        .eq('created_by', profile.id)
-        .neq('status', 'cancelled')
-        .gte('deal_date', monthStart),
-      // H1: 公司总成交额改用 SECURITY DEFINER RPC —— deals 表 RLS 会把
-      // member 的直查限制成只看自己名下,否则占比分母恒等于分子(永远 100%)。
-      supabase.rpc('get_company_month_revenue', { p_month_start: monthStart }),
-      // 修 #11: 读取主货币设置
-      supabase
-        .from('system_settings')
-        .select('value')
-        .eq('key', 'main_currency')
-        .maybeSingle(),
-    ])
-    setMyCustomers(custs || [])
-    setTodayNewCount(newCount || 0)
-    setTodayLogCount(logCount || 0)
-    setMyReminders((reminderRows as Reminder[]) || [])
-
-    // P1-2.1: Set weekly/monthly stats
-    setWeeklyStats({
-      newCustomers: weekCustomers || 0,
-      logs: weekLogs || 0,
-      stageChanges: weekStageChanges || 0,
-      deals: weekDeals?.length || 0
-    })
-    setMonthlyStats({
-      newCustomers: monthCustomers || 0,
-      logs: monthLogs || 0,
-      stageChanges: monthStageChanges || 0,
-      deals: monthDeals?.length || 0
-    })
-
-    // 修 #11: 主货币（默认 USD）
-    const mcVal = (mainCurrencyRow as { value?: unknown } | null)?.value
-    const mc = (typeof mcVal === 'string' && mcVal.length > 0 ? mcVal : 'USD').toUpperCase()
-    setMainCurrency(mc)
-
-    // P1-2.2: Calculate revenue — 修 #11: 只统计主货币，避免跨币种直接累加
-    const myRevenue = sumInMainCurrency(myMonthDeals || [], mc)
-    const companyRevenue = Number(companyRevenueRaw) || 0
-    setMyMonthRevenue(myRevenue)
-    setCompanyMonthRevenue(companyRevenue)
-
-    setLoading(false)
+    try {
+      const res = await fetch('/api/dashboard/personal', { method: 'POST' })
+      const body = (await res.json()) as DashboardResponse
+      if (!body.ok || !body.data) {
+        setLoading(false)
+        return
+      }
+      const d = body.data
+      setMyCustomers(d.my_customers || [])
+      setTodayNewCount(d.today_new_count || 0)
+      setTodayLogCount(d.today_logs || 0)
+      setMyReminders(d.my_reminders || [])
+      setWeeklyStats(d.weekly_stats)
+      setMonthlyStats(d.monthly_stats)
+      setMyMonthRevenue(d.my_month_revenue || 0)
+      setCompanyMonthRevenue(d.company_month_revenue || 0)
+      setMainCurrency((d.main_currency || 'USD').toUpperCase())
+    } catch {
+      // Network errors: stop loading so the empty state can render.
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { load() }, [profile])
 
   async function markDone(id: string) {
-    const supabase = createClient()
-    await supabase.from('reminders').update({ status: 'completed' }).eq('id', id)
+    await fetch(`/api/reminders/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'completed' }),
+    })
     load()
     // 修 #12: 通知 sidebar 立即刷新红圈
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('reminders-changed'))
@@ -375,7 +299,11 @@ export default function PersonalDashboard() {
 }
 
 function StatCard({ icon: Icon, label, value, color, danger }: {
-  icon: any; label: string; value: number; color: string; danger?: boolean
+  icon: React.ComponentType<{ size?: number; className?: string }>
+  label: string
+  value: number
+  color: string
+  danger?: boolean
 }) {
   return (
     <div className={`bg-white rounded-xl border p-4 ${danger ? 'border-red-200' : 'border-gray-200'}`}>

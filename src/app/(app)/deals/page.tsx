@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/auth-provider'
 import { Pagination } from '@/components/pagination'
 import type { Deal, Profile } from '@/lib/types'
@@ -14,6 +13,21 @@ type Row = Deal & {
 }
 
 type ExtraFilter = 'all' | 'reorder' | 'pending_deposit' | 'pending_balance'
+
+interface DealsResponse {
+  ok: boolean
+  items?: Row[]
+  total?: number
+  page_totals_by_currency?: Record<string, number>
+  page_reorder_count?: number
+  error?: string
+}
+
+interface CustomerMetaResponse {
+  ok: boolean
+  data?: { profiles: Profile[]; countries: string[]; tags: string[] }
+  error?: string
+}
 
 const PAGE_SIZE = 30
 
@@ -36,88 +50,52 @@ export default function DealsPage() {
   const [to, setTo] = useState<string>('')
   const [search, setSearch] = useState<string>('')
 
+  // Members for the owner filter — reuse customer-meta which already returns
+  // active profiles.
   useEffect(() => {
-    const supabase = createClient()
-    supabase.from('profiles').select('*').eq('is_active', true).then(({ data }) => {
-      setMembers((data as Profile[]) || [])
-    })
+    fetch('/api/customer-meta')
+      .then((res) => res.json() as Promise<CustomerMetaResponse>)
+      .then((body) => {
+        if (body.ok && body.data) setMembers(body.data.profiles)
+      })
+      .catch(() => { /* leave members empty on network errors */ })
   }, [])
 
   const load = useCallback(async () => {
     if (!profile?.id) return
     setLoading(true)
-    const supabase = createClient()
+    const params = new URLSearchParams()
+    params.set('page', String(page))
+    params.set('scope', scope)
+    if (status !== 'all') params.set('status', status)
+    if (ownerFilter !== 'all') params.set('owner_id', ownerFilter)
+    if (extra !== 'all') params.set('extra', extra)
+    if (from) params.set('from', from)
+    if (to) params.set('to', to)
+    if (search.trim()) params.set('search', search.trim())
 
-    // Stage 1：根据 scope/owner 算出"可见客户 ids"
-    let scopedCustomerIds: string[] | null = null
-    if (scope === 'mine' || ownerFilter !== 'all') {
-      let cq = supabase.from('customers').select('id')
-      if (scope === 'mine') cq = cq.eq('owner_id', profile.id)
-      if (ownerFilter !== 'all') cq = cq.eq('owner_id', ownerFilter)
-      const { data } = await cq
-      scopedCustomerIds = (data || []).map(c => c.id)
-    }
-
-    // search 匹配的客户 ids
-    let searchMatchedCustomerIds: string[] | null = null
-    if (search.trim()) {
-      const s = `%${search.trim()}%`
-      let cq = supabase.from('customers').select('id').or(`contact_name.ilike.${s},company_name.ilike.${s}`)
-      if (scopedCustomerIds !== null) cq = cq.in('id', scopedCustomerIds)
-      const { data } = await cq
-      searchMatchedCustomerIds = (data || []).map(c => c.id)
-    }
-
-    // Stage 2：主查询
-    let query = supabase
-      .from('deals')
-      .select(`
-        *,
-        creator:profiles!deals_created_by_fkey(*),
-        customer:customers!deals_customer_id_fkey(
-          id, contact_name, company_name, owner_id,
-          owner:profiles!customers_owner_id_fkey(*)
-        )
-      `, { count: 'exact' })
-      .order('deal_date', { ascending: false })
-
-    if (status !== 'all') query = query.eq('status', status)
-    if (from) query = query.gte('deal_date', from)
-    if (to) query = query.lte('deal_date', to)
-    if (extra === 'reorder') query = query.eq('is_reorder', true)
-    if (extra === 'pending_deposit') query = query.eq('deposit_received', false)
-    if (extra === 'pending_balance') query = query.eq('balance_received', false)
-
-    if (scopedCustomerIds !== null) {
-      if (scopedCustomerIds.length === 0) {
-        setRows([]); setTotal(0); setPageTotalsByCurrency({}); setPageReorderCount(0); setLoading(false); return
-      }
-      query = query.in('customer_id', scopedCustomerIds)
-    }
-
-    if (search.trim()) {
-      const s = `%${search.trim()}%`
-      if (searchMatchedCustomerIds && searchMatchedCustomerIds.length > 0) {
-        query = query.or(`deal_no.ilike.${s},payment_method.ilike.${s},customer_id.in.(${searchMatchedCustomerIds.join(',')})`)
+    try {
+      const res = await fetch('/api/deals?' + params.toString())
+      const body = (await res.json()) as DealsResponse
+      if (!body.ok) {
+        setRows([])
+        setTotal(0)
+        setPageTotalsByCurrency({})
+        setPageReorderCount(0)
       } else {
-        query = query.or(`deal_no.ilike.${s},payment_method.ilike.${s}`)
+        setRows(body.items || [])
+        setTotal(body.total || 0)
+        setPageTotalsByCurrency(body.page_totals_by_currency || {})
+        setPageReorderCount(body.page_reorder_count || 0)
       }
+    } catch {
+      setRows([])
+      setTotal(0)
+      setPageTotalsByCurrency({})
+      setPageReorderCount(0)
+    } finally {
+      setLoading(false)
     }
-
-    const start = (page - 1) * PAGE_SIZE
-    const { data, count } = await query.range(start, start + PAGE_SIZE - 1)
-    const list = (data as Row[]) || []
-    setRows(list)
-    setTotal(count || 0)
-    const totals = list.reduce<Record<string, number>>((acc, r) => {
-      if (!r.deal_amount) return acc
-      const cur = r.currency || 'USD'
-      acc[cur] = (acc[cur] || 0) + r.deal_amount
-      return acc
-    }, {})
-    setPageTotalsByCurrency(totals)
-    setPageReorderCount(list.filter(r => r.is_reorder).length)
-    setLoading(false)
   }, [profile?.id, status, from, to, extra, scope, ownerFilter, search, page])
 
   useEffect(() => { load() }, [load])
