@@ -188,79 +188,86 @@ export async function PATCH(
     update.owner_id = newOwnerId
   }
 
-  if (Object.keys(update).length === 0) {
-    // Nothing to update — return current shape for client convenience
-    // (don't 400; client may have submitted only `tags`).
-  } else {
-    const { error: updErr } = await admin
-      .from<Customer>('customers')
-      .update(update)
-      .eq('id', customerId)
-    if (updErr) {
-      return Response.json(
-        { ok: false, error: '更新客户失败: ' + updErr.message },
-        { status: 500 }
-      )
-    }
+  // Phase 5B-follow1 · Writes in parallel (customer update + ownership audit + tag sync)
+  // These touch independent tables/rows; their ordering relative to each other doesn't matter.
+  const writes: Array<Promise<{ error?: { message: string } | null } | void>> = []
+
+  if (Object.keys(update).length > 0) {
+    writes.push(
+      (async () => {
+        const { error: updErr } = await admin
+          .from<Customer>('customers')
+          .update(update)
+          .eq('id', customerId)
+        if (updErr) throw new Error('更新客户失败: ' + updErr.message)
+      })()
+    )
   }
 
-  // Ownership-change audit row (only when admin moved owner_id)
   if (ownerInBody && user.role === 'admin' && newOwnerId !== existing.owner_id) {
-    const { error: ownErr } = await admin.from('customer_ownership_changes').insert({
-      customer_id: customerId,
-      from_owner: existing.owner_id,
-      to_owner: newOwnerId,
-      changed_by: user.id,
-    })
-    if (ownErr) {
-      console.warn('[api/customers PATCH] ownership-change insert failed:', ownErr.message)
-    }
+    writes.push(
+      (async () => {
+        const { error: ownErr } = await admin.from('customer_ownership_changes').insert({
+          customer_id: customerId,
+          from_owner: existing.owner_id,
+          to_owner: newOwnerId,
+          changed_by: user.id,
+        })
+        if (ownErr) {
+          console.warn('[api/customers PATCH] ownership-change insert failed:', ownErr.message)
+        }
+      })()
+    )
   }
 
-  // Tag sync — best-effort, mirrors POST semantics
   if (Array.isArray(body.tags)) {
     const tags = body.tags.filter((t) => typeof t === 'string' && t.trim())
-    const { error: delErr } = await admin
-      .from('customer_tags')
-      .delete()
-      .eq('customer_id', customerId)
-    if (delErr) {
-      console.warn('[api/customers PATCH] tag delete failed:', delErr.message)
-    }
-    if (tags.length > 0) {
-      const tagRows = tags.map((tag) => ({
-        customer_id: customerId,
-        tag: tag.trim(),
-        created_by: user.id,
-      }))
-      const { error: insErr } = await admin.from('customer_tags').insert(tagRows)
-      if (insErr) {
-        console.warn('[api/customers PATCH] tag insert failed:', insErr.message)
-      }
-    }
+    writes.push(
+      (async () => {
+        const { error: delErr } = await admin
+          .from('customer_tags')
+          .delete()
+          .eq('customer_id', customerId)
+        if (delErr) {
+          console.warn('[api/customers PATCH] tag delete failed:', delErr.message)
+        }
+        if (tags.length > 0) {
+          const tagRows = tags.map((tag) => ({
+            customer_id: customerId,
+            tag: tag.trim(),
+            created_by: user.id,
+          }))
+          const { error: insErr } = await admin.from('customer_tags').insert(tagRows)
+          if (insErr) {
+            console.warn('[api/customers PATCH] tag insert failed:', insErr.message)
+          }
+        }
+      })()
+    )
   }
 
-  // Re-fetch hydrated shape (same as GET) for the client to swap into state
-  const { data: fresh } = await admin
-    .from<Customer>('customers')
-    .select('*')
-    .eq('id', customerId)
-    .maybeSingle()
-  const customer = (fresh ?? existing) as Customer
-  let owner: Profile | undefined
-  if (customer.owner_id) {
-    const { data: ownerRow } = await admin
-      .from<Profile>('profiles')
-      .select('*')
-      .eq('id', customer.owner_id)
-      .maybeSingle()
-    owner = (ownerRow ?? undefined) as Profile | undefined
+  try {
+    await Promise.all(writes)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return Response.json({ ok: false, error: msg }, { status: 500 })
   }
-  const { data: tagRows } = await admin
-    .from('customer_tags')
-    .select('tag')
-    .eq('customer_id', customerId)
-  const tagRowsArr = (tagRows ?? []) as Array<{ tag: string }>
+
+  // Phase 5B-follow1 · Re-fetch in parallel (customer + owner + tags)
+  // owner_id 在 update 已知,可直接用 newOwnerId 推断,避免 customer fetch → owner fetch 串行
+  const finalOwnerId = ownerInBody && user.role === 'admin' ? newOwnerId : existing.owner_id
+
+  const [freshRes, ownerRes, tagRowsRes] = await Promise.all([
+    admin.from<Customer>('customers').select('*').eq('id', customerId).maybeSingle(),
+    finalOwnerId
+      ? admin.from<Profile>('profiles').select('*').eq('id', finalOwnerId).maybeSingle()
+      : Promise.resolve({ data: null }),
+    admin.from('customer_tags').select('tag').eq('customer_id', customerId),
+  ])
+
+  const customer = (freshRes.data ?? existing) as Customer
+  const owner = (ownerRes.data ?? undefined) as Profile | undefined
+  const tagRowsArr = (tagRowsRes.data ?? []) as Array<{ tag: string }>
   const tags = tagRowsArr.map((row) => row.tag)
 
   // Phase 5B · waitUntil — function 不阻塞 response,outbound 在 response 后继续跑

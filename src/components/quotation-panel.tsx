@@ -5,10 +5,12 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuth } from './auth-provider'
 import type { Quotation, QuotationItem } from '@/lib/types'
 import {
-  QUOTATION_STATUS_LABELS, QUOTATION_STATUSES, CURRENCIES, INCOTERMS, PRODUCT_CATEGORIES,
+  QUOTATION_STATUS_LABELS, QUOTATION_STATUSES, CURRENCIES, INCOTERMS,
 } from '@/lib/constants'
 import { Plus, ChevronDown, ChevronRight, Copy, Trash2, Pencil, Package, Printer } from 'lucide-react'
 import { ConfirmModal } from './confirm-modal'
+import { MasterProductPicker } from './master-product-picker'
+import type { MasterProduct } from '@/lib/master-products-client'
 
 interface Props {
   customerId: string
@@ -66,7 +68,32 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
       if (field === 'quantity' || field === 'unit_price') {
         item.amount = (Number(item.quantity) || 0) * (Number(item.unit_price) || 0)
       }
+      // Phase 5C-follow1: 自由编辑产品名时清掉 master_product_id 关联(不再对应那条 master 记录)
+      if (field === 'product_name') {
+        item.master_product_id = null
+      }
       next[idx] = item
+      return next
+    })
+  }
+
+  function pickMasterProduct(idx: number, p: MasterProduct) {
+    setItems(prev => {
+      const next = [...prev]
+      const cur = next[idx]
+      const name = p.name_zh || p.name_en || p.sku
+      const qty = Number(cur.quantity) || 0
+      // unit_price 仅在当前未填(0)时填充 master 默认价,避免覆盖用户已经报的价
+      const unitPrice = Number(cur.unit_price) > 0
+        ? Number(cur.unit_price)
+        : (p.price_default ?? 0)
+      next[idx] = {
+        ...cur,
+        product_name: name,
+        master_product_id: p.id,
+        unit_price: unitPrice,
+        amount: qty * unitPrice,
+      }
       return next
     })
   }
@@ -341,8 +368,12 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
                   {items.map((item, idx) => (
                     <tr key={idx}>
                       <td className="py-1 px-1">
-                        <input list="product-list" value={item.product_name || ''} onChange={e => updateItem(idx, 'product_name', e.target.value)}
-                          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-gold-500" />
+                        <MasterProductPicker
+                          value={item.product_name || ''}
+                          masterProductId={item.master_product_id ?? null}
+                          onTextChange={text => updateItem(idx, 'product_name', text)}
+                          onPick={p => pickMasterProduct(idx, p)}
+                        />
                       </td>
                       <td className="py-1 px-1">
                         <input value={item.spec || ''} onChange={e => updateItem(idx, 'spec', e.target.value)}
@@ -384,9 +415,6 @@ export function QuotationPanel({ customerId, quotations, canEdit, onRefresh, onC
                 </tfoot>
               </table>
             </div>
-            <datalist id="product-list">
-              {PRODUCT_CATEGORIES.map(p => <option key={p} value={p} />)}
-            </datalist>
           </div>
 
           <div>

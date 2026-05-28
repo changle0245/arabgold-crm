@@ -5,11 +5,13 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuth } from './auth-provider'
 import type { Deal, DealItem, Quotation } from '@/lib/types'
 import {
-  DEAL_STATUS_LABELS, DEAL_STATUSES, CURRENCIES, PAYMENT_PREFERENCES, PRODUCT_CATEGORIES,
+  DEAL_STATUS_LABELS, DEAL_STATUSES, CURRENCIES, PAYMENT_PREFERENCES,
 } from '@/lib/constants'
 import { Plus, Package, Check, Pencil, Trash2, ChevronDown, ChevronRight } from 'lucide-react'
 import { todayLocalISO } from '@/lib/dates'
 import { ConfirmModal } from './confirm-modal'
+import { MasterProductPicker } from './master-product-picker'
+import type { MasterProduct } from '@/lib/master-products-client'
 
 interface Props {
   customerId: string
@@ -63,7 +65,31 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
       if (field === 'quantity' || field === 'unit_price') {
         it.amount = (Number(it.quantity) || 0) * (Number(it.unit_price) || 0)
       }
+      // Phase 5C-follow1: 自由编辑产品名时清掉 master_product_id 关联
+      if (field === 'product_name') {
+        it.master_product_id = null
+      }
       next[idx] = it
+      return next
+    })
+  }
+
+  function pickMasterProduct(idx: number, p: MasterProduct) {
+    setItems(prev => {
+      const next = [...prev]
+      const cur = next[idx]
+      const name = p.name_zh || p.name_en || p.sku
+      const qty = Number(cur.quantity) || 0
+      const unitPrice = Number(cur.unit_price) > 0
+        ? Number(cur.unit_price)
+        : (p.price_default ?? 0)
+      next[idx] = {
+        ...cur,
+        product_name: name,
+        master_product_id: p.id,
+        unit_price: unitPrice,
+        amount: qty * unitPrice,
+      }
       return next
     })
   }
@@ -384,8 +410,12 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
                     {items.map((item, idx) => (
                       <tr key={idx}>
                         <td className="py-1 px-1">
-                          <input list="deal-product-list" value={item.product_name || ''} onChange={e => updateItem(idx, 'product_name', e.target.value)}
-                            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-gold-500" />
+                          <MasterProductPicker
+                            value={item.product_name || ''}
+                            masterProductId={item.master_product_id ?? null}
+                            onTextChange={text => updateItem(idx, 'product_name', text)}
+                            onPick={p => pickMasterProduct(idx, p)}
+                          />
                         </td>
                         <td className="py-1 px-1">
                           <input value={item.spec || ''} onChange={e => updateItem(idx, 'spec', e.target.value)}
@@ -424,9 +454,6 @@ export function DealPanel({ customerId, deals, quotations, canEdit, onRefresh, p
                     </tr>
                   </tfoot>
                 </table>
-                <datalist id="deal-product-list">
-                  {PRODUCT_CATEGORIES.map(p => <option key={p} value={p} />)}
-                </datalist>
               </div>
             )}
           </div>
