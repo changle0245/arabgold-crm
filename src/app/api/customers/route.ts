@@ -6,6 +6,7 @@
 // to avoid the browser-side deny stub.
 
 import { type NextRequest } from 'next/server'
+import { waitUntil } from '@vercel/functions'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireUser } from '@/lib/auth-helpers'
 import { fireAndForgetCustomerSync } from '@/lib/master-sync'
@@ -248,8 +249,8 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Phase 4 stage 4 · 中台主数据 outbound push (await — Vercel serverless kill 后 fetch 丢失,必须阻塞)
-  await fireAndForgetCustomerSync(inserted)
+  // Phase 5B · waitUntil — function 不阻塞 response,outbound 在 response 后继续跑
+  waitUntil(fireAndForgetCustomerSync(inserted))
 
   return Response.json({ ok: true, data: inserted })
 }

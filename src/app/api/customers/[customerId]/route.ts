@@ -6,6 +6,7 @@
 // customers/[id]/page.tsx, customers/[id]/edit/page.tsx and customer-form.tsx.
 
 import { type NextRequest } from 'next/server'
+import { waitUntil } from '@vercel/functions'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireUser, requireAdmin } from '@/lib/auth-helpers'
 import { fireAndForgetCustomerSync } from '@/lib/master-sync'
@@ -262,8 +263,8 @@ export async function PATCH(
   const tagRowsArr = (tagRows ?? []) as Array<{ tag: string }>
   const tags = tagRowsArr.map((row) => row.tag)
 
-  // Phase 4 stage 4 · 中台主数据 outbound push (await — Vercel serverless kill 后 fetch 丢失,必须阻塞)
-  await fireAndForgetCustomerSync(customer)
+  // Phase 5B · waitUntil — function 不阻塞 response,outbound 在 response 后继续跑
+  waitUntil(fireAndForgetCustomerSync(customer))
 
   return Response.json({ ok: true, data: { ...customer, owner, tags } })
 }
