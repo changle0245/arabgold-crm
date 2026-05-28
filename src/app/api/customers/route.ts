@@ -248,8 +248,8 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Phase 4 stage 4 · 中台主数据 outbound push (fire-and-forget,不阻塞 response)
-  fireAndForgetCustomerSync(inserted)
+  // Phase 4 stage 4 · 中台主数据 outbound push (await — Vercel serverless kill 后 fetch 丢失,必须阻塞)
+  await fireAndForgetCustomerSync(inserted)
 
   return Response.json({ ok: true, data: inserted })
 }

@@ -262,8 +262,8 @@ export async function PATCH(
   const tagRowsArr = (tagRows ?? []) as Array<{ tag: string }>
   const tags = tagRowsArr.map((row) => row.tag)
 
-  // Phase 4 stage 4 · 中台主数据 outbound push (fire-and-forget,不阻塞 response)
-  fireAndForgetCustomerSync(customer)
+  // Phase 4 stage 4 · 中台主数据 outbound push (await — Vercel serverless kill 后 fetch 丢失,必须阻塞)
+  await fireAndForgetCustomerSync(customer)
 
   return Response.json({ ok: true, data: { ...customer, owner, tags } })
 }

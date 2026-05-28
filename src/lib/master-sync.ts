@@ -152,33 +152,33 @@ export async function pushCustomerToMaster(
   }
 }
 
-// 调用方在 POST/PATCH customer 成功后调用这个 — fire-and-forget,不 await。
+// 调用方在 POST/PATCH customer 成功后 `await` 这个 — 同步等中台 response。
+// 之前是 fire-and-forget(void IIFE),但 Vercel serverless 在 Response.json 返回后
+// 立即 kill function,outbound fetch promise 来不及发,导致 sync 沉默丢失。
+// 改为 awaitable + 阻塞 response 几百 ms 换取可靠 sync。
 // - push 成功且原本没有 master_customer_id 时,把回填写到 customers 表
-// - 全部错误吞掉,只打日志,不影响 API response
-export function fireAndForgetCustomerSync(
+// - 全部错误吞掉,只打日志,不影响 API response status
+export async function fireAndForgetCustomerSync(
   customer: Customer & { master_customer_id?: string | null }
-): void {
-  // 用 microtask 立刻执行,但调用方不 await
-  void (async () => {
-    try {
-      const result = await pushCustomerToMaster(customer)
-      if (!result) return
-      const previous = customer.master_customer_id ?? null
-      if (previous && previous === result.master_id) {
-        // 已经一致,不用写
-        return
-      }
-      // 第一次同步,或中台改了 master_id(理论上不会),都把最新值写回
-      try {
-        await db.query(
-          'update public.customers set master_customer_id = $1 where id = $2',
-          [result.master_id, customer.id]
-        )
-      } catch (e) {
-        console.error('[master-sync] backfill master_customer_id failed:', e)
-      }
-    } catch (e) {
-      console.error('[master-sync] hook unhandled:', e)
+): Promise<void> {
+  try {
+    const result = await pushCustomerToMaster(customer)
+    if (!result) return
+    const previous = customer.master_customer_id ?? null
+    if (previous && previous === result.master_id) {
+      // 已经一致,不用写
+      return
     }
-  })()
+    // 第一次同步,或中台改了 master_id(理论上不会),都把最新值写回
+    try {
+      await db.query(
+        'update public.customers set master_customer_id = $1 where id = $2',
+        [result.master_id, customer.id]
+      )
+    } catch (e) {
+      console.error('[master-sync] backfill master_customer_id failed:', e)
+    }
+  } catch (e) {
+    console.error('[master-sync] hook unhandled:', e)
+  }
 }
