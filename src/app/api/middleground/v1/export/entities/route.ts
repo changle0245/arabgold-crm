@@ -29,6 +29,62 @@ interface Entity {
   updated_at: string
 }
 
+// 行级明细 — 中台靠 master_product_id 把"哪个产品卖给哪个客户"关联起来。
+// master_product_id 可空(历史/自由文本商品),照实导出 null,不过滤。
+// product_name 不是 PII,明文导出(任务简报红线只针对客户 PII)。
+interface LineItem {
+  master_product_id: string | null
+  product_name: string | null
+  quantity: number | null
+  unit_price_cents: number | null
+  amount_cents: number | null
+}
+
+function toNumOrNull(v: unknown): number | null {
+  return v === null || v === undefined ? null : Number(v)
+}
+function toCents(v: unknown): number | null {
+  const n = toNumOrNull(v)
+  return n === null ? null : Math.round(n * 100)
+}
+
+// 按父 id 批量取明细行,一次查询覆盖整页,避免 N+1。
+// itemTable: 'deal_items' | 'quotation_items';fk: 'deal_id' | 'quotation_id'
+async function fetchItemsByParent(
+  admin: ReturnType<typeof createAdminClient>,
+  itemTable: 'deal_items' | 'quotation_items',
+  fk: 'deal_id' | 'quotation_id',
+  parentIds: string[]
+): Promise<Map<string, LineItem[]>> {
+  const map = new Map<string, LineItem[]>()
+  if (parentIds.length === 0) return map
+
+  const { data, error } = await admin
+    .from(itemTable)
+    .select(`id, ${fk}, master_product_id, product_name, quantity, unit_price, amount`)
+    .in(fk, parentIds)
+    .order(fk, { ascending: true })
+    .order('id', { ascending: true })
+
+  if (error) throw error
+
+  const itemRows = (data ?? []) as Array<Record<string, unknown>>
+  for (const it of itemRows) {
+    const parentId = it[fk] as string
+    const arr = map.get(parentId) ?? []
+    arr.push({
+      // 金额用整数最小单位(cents),与 deal/quote 头部 amount_cents 口径一致(契约 §4)
+      master_product_id: (it.master_product_id as string | null) ?? null,
+      product_name: (it.product_name as string | null) ?? null,
+      quantity: toNumOrNull(it.quantity),
+      unit_price_cents: toCents(it.unit_price),
+      amount_cents: toCents(it.amount),
+    })
+    map.set(parentId, arr)
+  }
+  return map
+}
+
 // cursor 用 base64({ts, id})。同 ts 下用 id 做 tiebreaker
 function encodeCursor(ts: string, id: string): string {
   return Buffer.from(JSON.stringify({ ts, id })).toString('base64url')
@@ -132,7 +188,15 @@ async function fetchDeals(
   if (error) throw error
 
   const dealRows = (data ?? []) as Array<Record<string, unknown>>
-  const rows: Entity[] = dealRows.slice(0, limit).map((d) => {
+  const pageDeals = dealRows.slice(0, limit)
+  // 一次额外查询按 deal_id IN (...) 批量取明细,避免 N+1
+  const itemsByDeal = await fetchItemsByParent(
+    admin,
+    'deal_items',
+    'deal_id',
+    pageDeals.map((d) => d.id as string)
+  )
+  const rows: Entity[] = pageDeals.map((d) => {
     const amount = d.deal_amount === null || d.deal_amount === undefined ? null : Number(d.deal_amount)
     const currency = ((d.currency as string | null) ?? 'USD').toUpperCase()
     return {
@@ -154,6 +218,8 @@ async function fetchDeals(
         balance_received: d.balance_received,
         status: d.status,
         is_reorder: d.is_reorder,
+        // 行级明细 — 中台靠每行 master_product_id 关联"哪个产品卖给了哪个客户"
+        items: itemsByDeal.get(d.id as string) ?? [],
       },
       created_at: toIsoZ(d.created_at as string) ?? new Date(0).toISOString(),
       updated_at: toIsoZ(d.created_at as string) ?? new Date(0).toISOString(),
@@ -190,7 +256,15 @@ async function fetchQuotes(
   if (error) throw error
 
   const quoteRows = (data ?? []) as Array<Record<string, unknown>>
-  const rows: Entity[] = quoteRows.slice(0, limit).map((qrow) => {
+  const pageQuotes = quoteRows.slice(0, limit)
+  // 一次额外查询按 quotation_id IN (...) 批量取明细,避免 N+1
+  const itemsByQuote = await fetchItemsByParent(
+    admin,
+    'quotation_items',
+    'quotation_id',
+    pageQuotes.map((qrow) => qrow.id as string)
+  )
+  const rows: Entity[] = pageQuotes.map((qrow) => {
     const total = qrow.total_amount === null || qrow.total_amount === undefined ? null : Number(qrow.total_amount)
     const currency = ((qrow.currency as string | null) ?? 'USD').toUpperCase()
     return {
@@ -208,6 +282,8 @@ async function fetchQuotes(
         currency,
         valid_until: qrow.valid_until,
         status: qrow.status,
+        // 行级明细 — 中台靠每行 master_product_id 关联"哪个产品报给了哪个客户"
+        items: itemsByQuote.get(qrow.id as string) ?? [],
       },
       created_at: toIsoZ(qrow.created_at as string) ?? new Date(0).toISOString(),
       updated_at: toIsoZ(qrow.created_at as string) ?? new Date(0).toISOString(),
